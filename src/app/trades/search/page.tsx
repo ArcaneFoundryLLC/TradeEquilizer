@@ -97,14 +97,19 @@ export default function TradeSearchPage() {
         params.set('include_extras', 'false')
         params.set('include_multilingual', 'false')
         params.set('page', '1')
-        const res = await fetch(`/api/scryfall?${params.toString()}`, {
-          signal: controller.signal,
-        })
-        if (!res.ok) {
-          const text = await res.text()
-          throw new Error(text || 'Failed to fetch')
+        // Try local catalog first; fallback to Scryfall on error/empty
+        let res = await fetch(`/api/cards/search?${params.toString()}`)
+        let data = await res.json()
+        if (!res.ok || !Array.isArray(data?.data) || data.data.length === 0) {
+          const sfRes = await fetch(`/api/scryfall?${params.toString()}`, {
+            signal: controller.signal,
+          })
+          if (!sfRes.ok) {
+            const text = await sfRes.text()
+            throw new Error(text || 'Failed to fetch')
+          }
+          data = await sfRes.json()
         }
-        const data = await res.json()
         const items: ScryfallCard[] = (data?.data ?? [])
         setResults(items)
       } catch (e) {
