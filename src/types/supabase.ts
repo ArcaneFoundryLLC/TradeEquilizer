@@ -38,6 +38,41 @@ export interface Database {
           updated_at?: string
         }
       }
+      wants: {
+        Row: {
+          id: string
+          user_id: string | null
+          item_id: string | null
+          quantity: number
+          min_condition: 'NM' | 'LP' | 'MP' | 'HP'
+          language_ok: string[]
+          finish_ok: string[]
+          priority: number
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id?: string | null
+          item_id?: string | null
+          quantity: number
+          min_condition: 'NM' | 'LP' | 'MP' | 'HP'
+          language_ok?: string[]
+          finish_ok?: string[]
+          priority: number
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string | null
+          item_id?: string | null
+          quantity?: number
+          min_condition?: 'NM' | 'LP' | 'MP' | 'HP'
+          language_ok?: string[]
+          finish_ok?: string[]
+          priority?: number
+          created_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never

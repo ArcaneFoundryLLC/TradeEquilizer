@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/Button'
+// Do not import server route handlers into a client component.
+// Client should call the HTTP API endpoints via fetch.
 
 type MockCard = {
   id: string
@@ -28,6 +30,26 @@ type DisplayCard = {
   set_name?: string
   collector_number: string
   image_uris?: { small?: string; normal?: string }
+}
+
+export const addWant = async (payload: any) => {
+  try {
+    const res = await fetch('/api/wants', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(text || 'Failed to add want')
+    }
+
+    return await res.json()
+  } catch (error) {
+    console.error('Error adding want:', error)
+    throw error
+  }
 }
 
 export default function TradeSearchPage() {
@@ -315,6 +337,14 @@ export default function TradeSearchPage() {
                 <Button
                   size="sm"
                   className="w-full sm:w-auto"
+                  onClick={() => {
+                    if (!user) {
+                      router.push('/login')
+                      return
+                    }
+                    // TODO: integrate save-to-trade-list
+                    addWant({itemId: card.id, quantity: 1, priority: 1});
+                  }}
                   onClick={() => handleAddToInventory(card)}
                   disabled={addingToInventory === card.id}
                 >
