@@ -337,14 +337,6 @@ export default function TradeSearchPage() {
                 <Button
                   size="sm"
                   className="w-full sm:w-auto"
-                  onClick={() => {
-                    if (!user) {
-                      router.push('/login')
-                      return
-                    }
-                    // TODO: integrate save-to-trade-list
-                    addWant({itemId: card.id, quantity: 1, priority: 1});
-                  }}
                   onClick={() => handleAddToInventory(card)}
                   disabled={addingToInventory === card.id}
                 >

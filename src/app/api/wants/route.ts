@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { wantSummary } from '@/types/want'
 import { Database } from '@/types/supabase'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { getWantList } from './wantList'
 import next from 'next';
 
 
@@ -17,30 +18,13 @@ export async function GET(){
     }
 
     const userId = userData.user.id
-    const supa: any = client;
-
-    // Fetch wants for the authenticated user
-    const { data: rows, error: selectError } = await supa
-        .from('wants')
-        .select('id, item_id, quantity, priority')
-        .eq('user_id', userId)
-        .order('priority', { ascending: true })
-
-    // Handle potential database errors
-    if (selectError) {
-        console.error('Supabase select error:', selectError)
-        return NextResponse.json({ error: 'Database error' }, { status: 500 })
-  }
-
-  // Map database rows to wantSummary objects
-   const wants = (rows ?? []).map((r: any) => ({
-    id: String(r.id),
-    itemId: String(r.item_id),
-    quantity: r.quantity,
-    priority: r.priority,
-    }));
-
-    return NextResponse.json(wants, {status: 200});
+        try {
+            const wants = await getWantList(userId)
+            return NextResponse.json({ data: wants }, { status: 200 })
+        } catch (e) {
+            console.error('Error fetching wants for user:', e)
+            return NextResponse.json({ error: 'Database error' }, { status: 500 })
+        }
 }
 
 
@@ -224,6 +208,7 @@ export async function PUT(request: NextRequest) {
             {status: 400}
         )
     }
+
     const wantId = body.id;
     const updates: Partial<Database['public']['Tables']['wants']['Update']> = body;
     delete updates.id; 
@@ -232,13 +217,49 @@ export async function PUT(request: NextRequest) {
             .from('wants')
             .update(updates)
             .eq('id', wantId)
-            .eq('user_id', userData.user.id);
+            .eq('user_id', userData.user.id)
+            .select();
     if (updateError) {
         console.error('Supabase update error:', updateError);
         return NextResponse.json({ error: 'Database error' }, { status: 500 });
     }
 
     if (!updated || updated.length === 0) {
+        // If no rows were updated, it could be either: the want doesn't exist,
+        // or it exists but belongs to a different user (RLS prevented update).
+        // Try to detect which case using the service role client (no RLS).
+        try {
+            if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+                // Can't check ownership without service key; return generic 404
+                return NextResponse.json({ error: 'Want not found' }, { status: 404 });
+            }
+            const svc = await createServiceClient()
+            const { data: existingWant } = await (svc as any)
+                .from('wants')
+                .select('id, user_id')
+                .eq('id', wantId)
+                .maybeSingle()
+
+            if (existingWant) {
+                if (existingWant.user_id === userData.user.id) {
+                    // Log a warning and return a generic error.
+                    console.warn('PUT update failed unexpectedly', { wantId, authUserId: userData.user.id })
+                    return NextResponse.json({ error: 'Failed to update want' }, { status: 500 })
+                }
+                // The want exists but wasn't updated — likely a permission issue
+                console.warn('PUT denied: user mismatch', { wantId, authUserId: userData.user.id, ownerId: existingWant.user_id })
+                // Include the ids in the response to aid debugging during development.
+                return NextResponse.json(
+                    { error: 'Forbidden: cannot modify this want', userId: userData.user.id, ownerId: existingWant.user_id },
+                    { status: 403 }
+                )
+            }
+            
+        } catch (e) {
+            console.error('Error checking want existence with service client:', e)
+            // fallthrough to generic 404
+        }
+
         return NextResponse.json({ error: 'Want not found' }, { status: 404 });
     }
 
