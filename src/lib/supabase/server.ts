@@ -35,3 +35,32 @@ export async function createClient() {
     }
   )
 }
+
+// Create a Supabase client using the service role key for trusted server-side
+// operations that need to bypass Row Level Security (e.g. inserting catalog
+// items). Only use this on the server and never expose the service role key
+// to the browser.
+export async function createServiceClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    throw new Error('Missing Supabase environment variables (service role)')
+  }
+
+  // IMPORTANT: createServerClient requires cookie handlers. Passing a
+  // cookie implementation that returns an empty list ensures no user
+  // session is picked up while satisfying the library contract. This
+  // allows the service role key to be used and bypass RLS for trusted
+  // server-side operations.
+  return createServerClient<Database>(supabaseUrl, supabaseServiceRoleKey, {
+    cookies: {
+      getAll() {
+        return []
+      },
+      setAll(_cookiesToSet: any) {
+        // no-op for service client
+      },
+    },
+  } as any)
+}

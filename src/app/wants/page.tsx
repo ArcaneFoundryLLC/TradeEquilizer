@@ -116,10 +116,20 @@ export default function WantListPage() {
 
     try {
       setError(null)
-      const response = await fetch(`/api/wants/${editingItem.id}`, {
+      // The API will forward these fields directly to the DB update call.
+      // Use snake_case DB column names so the update doesn't include unexpected keys.
+      const response = await fetch('/api/wants', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          id: editingItem.id,
+          item_id: formData.itemId,
+          quantity: formData.quantity,
+          min_condition: formData.minCondition,
+          language_ok: formData.languageOk,
+          finish_ok: formData.finishOk,
+          priority: formData.priority,
+        }),
       })
 
       if (!response.ok) {
@@ -143,8 +153,11 @@ export default function WantListPage() {
 
     try {
       setError(null)
-      const response = await fetch(`/api/wants/${id}`, {
+      // The API DELETE handler reads JSON body for the id (no path param)
+      const response = await fetch('/api/wants', {
         method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
       })
 
       if (!response.ok) {
