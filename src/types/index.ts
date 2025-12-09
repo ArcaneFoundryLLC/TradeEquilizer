@@ -59,4 +59,21 @@ export interface TradeSession {
   eventId?: string;
   expiresAt: Date;
   createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CreateSessionRequest {
+  game?: 'mtg';
+  priceSource?: 'tcgplayer_market';
+  fairnessThreshold?: number;
+  eventId?: string;
+}
+
+export interface JoinSessionRequest {
+  qrCode: string;
+}
+
+export interface SessionResponse {
+  session: TradeSession;
+  isCreator: boolean;
 }
