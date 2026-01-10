@@ -39,7 +39,44 @@ export async function GET() {
       updatedAt: row.updated_at,
     }))
 
-    return NextResponse.json({ data: mapped }, { status: 200 })
+    // Fetch latest price snapshots for these items (if any)
+    const itemIds = Array.from(new Set(mapped.map((m: any) => m.itemId).filter(Boolean)))
+    const latestPriceByItem: Record<string, any> = {}
+    if (itemIds.length > 0) {
+      try {
+        // Get recent price records for this set of items ordered newest first
+        const { data: pricesData } = await supa
+          .from('prices')
+          .select('item_id, market, as_of, version, source')
+          .in('item_id', itemIds)
+          .order('as_of', { ascending: false })
+
+        if (Array.isArray(pricesData)) {
+          for (const p of pricesData) {
+            if (!latestPriceByItem[p.item_id]) latestPriceByItem[p.item_id] = p
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to fetch latest prices for inventory items:', e)
+      }
+    }
+
+    // Attach price info to mapped rows
+    const mappedWithPrices = mapped.map((m: any) => {
+      const priceRow = latestPriceByItem[m.itemId]
+      if (priceRow) {
+        return {
+          ...m,
+          marketPrice: priceRow.market,
+          priceAsOf: priceRow.as_of,
+          priceVersion: priceRow.version,
+          priceSource: priceRow.source,
+        }
+      }
+      return m
+    })
+
+    return NextResponse.json({ data: mappedWithPrices }, { status: 200 })
   } catch (e) {
     console.error('Error fetching inventory:', e)
     return NextResponse.json({ error: 'Database error' }, { status: 500 })

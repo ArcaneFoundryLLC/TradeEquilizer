@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -53,6 +53,14 @@ export default function MarketPricingPage() {
     syncedItems: 0,
   })
 
+  // Autocomplete/search for cards when doing a price lookup
+  const [cardQuery, setCardQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [selectedCard, setSelectedCard] = useState<any | null>(null)
+  const fetchAbortRef = useRef<AbortController | null>(null)
+
   // Fetch sync status
   useEffect(() => {
     const fetchSyncStatus = async () => {
@@ -73,16 +81,108 @@ export default function MarketPricingPage() {
     fetchSyncStatus()
   }, [])
 
-  const handlePriceLookup = async () => {
-    if (!searchQuery.trim()) {
-      setError('Please enter an item ID')
+  // Fetch card search results when the user types (autocomplete)
+  useEffect(() => {
+    const q = cardQuery.trim()
+    if (q.length < 2) {
+      setSearchResults([])
+      setSearchError(null)
+      setSearchLoading(false)
+      return
+    }
+
+    const handle = setTimeout(async () => {
+      try {
+        setSearchLoading(true)
+        setSearchError(null)
+
+        // Abort any in-flight request
+        if (fetchAbortRef.current) fetchAbortRef.current.abort()
+        const controller = new AbortController()
+        fetchAbortRef.current = controller
+
+        const params = new URLSearchParams({ q, limit: '8', page: '1' })
+        let res = await fetch(`/api/cards/search?${params.toString()}`, { signal: controller.signal })
+        let data = await res.json()
+        if (!res.ok || !Array.isArray(data?.data) || data.data.length === 0) {
+          // Fallback to Scryfall search
+          const sfRes = await fetch(`/api/scryfall?${params.toString()}`, { signal: controller.signal })
+          if (!sfRes.ok) {
+            // Treat 404 from Scryfall (no matches) as empty result set instead of an error
+            if (sfRes.status === 404) {
+              setSearchResults([])
+              setSearchLoading(false)
+              return
+            }
+            const text = await sfRes.text().catch(() => '')
+            throw new Error(text || 'Failed to fetch')
+          }
+          data = await sfRes.json()
+        }
+
+        const items = (data?.data ?? [])
+        setSearchResults(items)
+      } catch (e) {
+        if ((e as any)?.name === 'AbortError') return
+        console.error('Search error', e)
+        // Surface the error message from the failing fetch where possible
+        const msg = e instanceof Error ? e.message : String(e)
+        setSearchError(msg || 'Unable to fetch results')
+      } finally {
+        setSearchLoading(false)
+      }
+    }, 300)
+
+    return () => clearTimeout(handle)
+  }, [cardQuery])
+
+  const handlePriceLookup = async (selectedCardOverride?: any) => {
+    const effectiveSelected = selectedCardOverride ?? selectedCard
+    // Determine itemId: prefer a selected card, otherwise try to resolve by searching
+    let itemIdToLookup = ''
+    if (effectiveSelected) {
+      // Selected card may be a Scryfall object (its id is a scryfall id) or an internal item id.
+      // Resolve it to an internal items.id via the server endpoint which will create a minimal
+      // catalog entry if needed.
+      try {
+        const res = await fetch(`/api/items/resolve?id=${encodeURIComponent(effectiveSelected.id)}`)
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          throw new Error(text || 'Failed to resolve selected card')
+        }
+        const json = await res.json()
+        itemIdToLookup = json?.id || ''
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to resolve selected card')
+        return
+      }
+    } else if (searchQuery.trim()) itemIdToLookup = searchQuery.trim()
+    else {
+      setError('Please enter a card name or ID')
       return
     }
 
     try {
       setIsLoading(true)
       setError(null)
-      const response = await fetch(`/api/prices/market?itemId=${encodeURIComponent(searchQuery)}`)
+
+      // If the value looks like a UUID (id from items), use it directly. Otherwise try to resolve via search API.
+      const uuidRegex = /^[0-9a-fA-F-]{36}$/
+      if (!uuidRegex.test(itemIdToLookup)) {
+        // Try to resolve by searching items with the cards search endpoint
+        const params = new URLSearchParams({ q: itemIdToLookup, limit: '1', page: '1' })
+        const res = await fetch(`/api/cards/search?${params.toString()}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.data) && data.data.length > 0) {
+            itemIdToLookup = data.data[0].id
+          }
+        }
+      }
+
+      if (!itemIdToLookup) throw new Error('Could not resolve item to lookup')
+
+      const response = await fetch(`/api/prices/market?itemId=${encodeURIComponent(itemIdToLookup)}`)
 
       if (!response.ok) {
         throw new Error('Failed to fetch price data')
@@ -206,22 +306,62 @@ export default function MarketPricingPage() {
               <CardTitle>Price Lookup</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex gap-2">
-                <Input
-                  type="text"
-                  placeholder="Enter item ID..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handlePriceLookup()
-                    }
-                  }}
-                  className="flex-1"
-                />
-                <Button onClick={handlePriceLookup} disabled={isLoading}>
-                  {isLoading ? 'Loading...' : 'Lookup'}
-                </Button>
+              <div className="relative">
+                <div className="flex gap-2">
+                  <Input
+                    type="text"
+                    placeholder="Search card name or ID..."
+                    value={cardQuery}
+                    onChange={(e) => { setCardQuery(e.target.value); setSelectedCard(null); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handlePriceLookup()
+                      }
+                    }}
+                    className="flex-1"
+                  />
+                  <Button onClick={handlePriceLookup} disabled={isLoading}>
+                    {isLoading ? 'Loading...' : 'Lookup'}
+                  </Button>
+                </div>
+
+                {/* Dropdown results */}
+                {cardQuery.trim().length >= 2 && (
+                  <div className="absolute z-10 mt-1 w-full max-h-64 overflow-auto rounded-md border bg-white shadow-sm">
+                    {searchLoading ? (
+                      <div className="p-3 text-sm text-gray-500">Searching...</div>
+                    ) : searchError ? (
+                      <div className="p-3 text-sm text-red-600">{searchError}</div>
+                    ) : searchResults.length === 0 ? (
+                      <div className="p-3 text-sm text-gray-500">No results</div>
+                    ) : (
+                      searchResults.map((card) => (
+                        <div
+                          key={card.id}
+                          className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-gray-50"
+                          onClick={async () => {
+                            setSelectedCard(card)
+                            setCardQuery(`${card.name} • ${card.set}`)
+                            setSearchResults([])
+                            // Immediately resolve & lookup price for the selected card
+                            await handlePriceLookup(card)
+                          }}
+                        >
+                          {card.image_uris?.small ? (
+                            <img src={card.image_uris.small} alt={card.name} className="h-10 w-8 object-contain" />
+                          ) : (
+                            <div className="h-10 w-8 bg-gray-100" />
+                          )}
+                          <div className="flex-1 text-sm">
+                            <div className="font-medium">{card.name}</div>
+                            <div className="text-xs text-gray-500">{card.set} • #{card.collector_number}</div>
+                          </div>
+                          <div className="text-xs text-gray-400">Select</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
               {error && (
                 <div className="mt-4 rounded-md bg-red-50 border border-red-200 p-3">

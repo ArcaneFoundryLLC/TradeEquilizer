@@ -238,10 +238,18 @@ export default function InventoryPage() {
     })
   }
 
+  const _iq = searchQuery.toLowerCase()
   const filteredInventory = inventory.filter(item =>
-    item.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.itemSet.toLowerCase().includes(searchQuery.toLowerCase())
+    (item.itemName ?? '').toLowerCase().includes(_iq) ||
+    (item.itemSet ?? '').toLowerCase().includes(_iq)
   )
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(amount)
+  }
 
   return (
     <ProtectedRoute>
@@ -317,6 +325,19 @@ export default function InventoryPage() {
                       Qty: {item.quantity} • {item.condition} • {item.finish}
                       {item.language !== 'en' && ` • ${item.language.toUpperCase()}`}
                     </div>
+
+                    {/* Price display (if available) */}
+                    {('marketPrice' in item) && (
+                      <div className="mt-3 text-sm text-gray-700">
+                        <div className="text-xs text-gray-500">Last synced</div>
+                        <div className="font-medium">
+                          {formatCurrency((item as any).marketPrice)}
+                          {((item as any).priceAsOf) && (
+                            <span className="ml-2 text-xs text-gray-400">({new Date((item as any).priceAsOf).toLocaleDateString()})</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-1 text-xs text-gray-500">
                       {item.tradable ? (
                         <span className="text-green-600">✓ Tradable</span>

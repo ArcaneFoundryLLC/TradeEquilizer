@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -49,6 +49,59 @@ export default function WantListPage() {
     finishOk: ['normal'],
     priority: 2,
   })
+
+  // Autocomplete/search for cards when adding a want
+  const [cardQuery, setCardQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [selectedCard, setSelectedCard] = useState<any | null>(null)
+  const fetchAbortRef = useRef<AbortController | null>(null)
+
+  // Fetch card search results when user types
+  useEffect(() => {
+    const q = cardQuery.trim()
+    if (q.length < 2) {
+      setSearchResults([])
+      setSearchError(null)
+      setSearchLoading(false)
+      return
+    }
+
+    const handle = setTimeout(async () => {
+      try {
+        setSearchLoading(true)
+        setSearchError(null)
+
+        if (fetchAbortRef.current) fetchAbortRef.current.abort()
+        const controller = new AbortController()
+        fetchAbortRef.current = controller
+
+        const params = new URLSearchParams({ q, limit: '8', page: '1' })
+        let res = await fetch(`/api/cards/search?${params.toString()}`, { signal: controller.signal })
+        let data = await res.json()
+        if (!res.ok || !Array.isArray(data?.data) || data.data.length === 0) {
+          const sfRes = await fetch(`/api/scryfall?${params.toString()}`, { signal: controller.signal })
+          if (!sfRes.ok) {
+            const text = await sfRes.text().catch(() => '')
+            throw new Error(text || 'Failed to fetch')
+          }
+          data = await sfRes.json()
+        }
+
+        const items = (data?.data ?? [])
+        setSearchResults(items)
+      } catch (e) {
+        if ((e as any)?.name === 'AbortError') return
+        console.error('Search error', e)
+        setSearchError('Unable to fetch results')
+      } finally {
+        setSearchLoading(false)
+      }
+    }, 300)
+
+    return () => clearTimeout(handle)
+  }, [cardQuery])
 
   // Fetch want list items
   useEffect(() => {
@@ -179,6 +232,9 @@ export default function WantListPage() {
       finishOk: ['normal'],
       priority: 2,
     })
+    setCardQuery('')
+    setSearchResults([])
+    setSelectedCard(null)
   }
 
   const openEditModal = (item: WantItem) => {
@@ -187,23 +243,25 @@ export default function WantListPage() {
       itemId: item.itemId,
       quantity: item.quantity,
       minCondition: item.minCondition,
-      languageOk: item.languageOk,
-      finishOk: item.finishOk,
+      languageOk: item.languageOk ?? ['en'],
+      finishOk: item.finishOk ?? ['normal'],
       priority: item.priority,
     })
   }
 
   const toggleLanguage = (lang: string) => {
-    const newLanguages = formData.languageOk.includes(lang)
-      ? formData.languageOk.filter(l => l !== lang)
-      : [...formData.languageOk, lang]
+    const current = formData.languageOk ?? []
+    const newLanguages = current.includes(lang)
+      ? current.filter(l => l !== lang)
+      : [...current, lang]
     setFormData({ ...formData, languageOk: newLanguages })
   }
 
   const toggleFinish = (finish: 'normal' | 'foil' | 'etched' | 'showcase') => {
-    const newFinishes = formData.finishOk.includes(finish)
-      ? formData.finishOk.filter(f => f !== finish)
-      : [...formData.finishOk, finish]
+    const current = formData.finishOk ?? []
+    const newFinishes = current.includes(finish)
+      ? current.filter(f => f !== finish)
+      : [...current, finish]
     setFormData({ ...formData, finishOk: newFinishes })
   }
 
@@ -225,9 +283,10 @@ export default function WantListPage() {
     }
   }
 
+  const _q = searchQuery.toLowerCase()
   const filteredWants = wants.filter(item =>
-    item.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.itemSet.toLowerCase().includes(searchQuery.toLowerCase())
+    (item.itemName ?? '').toLowerCase().includes(_q) ||
+    (item.itemSet ?? '').toLowerCase().includes(_q)
   )
 
   return (
@@ -309,10 +368,10 @@ export default function WantListPage() {
                       Qty: {item.quantity} • Min: {item.minCondition}
                     </div>
                     <div className="mt-1 text-xs text-gray-500">
-                      Languages: {item.languageOk.map(l => l.toUpperCase()).join(', ')}
+                      Languages: {(item.languageOk ?? []).map(l => l.toUpperCase()).join(', ')}
                     </div>
                     <div className="mt-1 text-xs text-gray-500">
-                      Finishes: {item.finishOk.join(', ')}
+                      Finishes: {(item.finishOk ?? []).join(', ')}
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -355,13 +414,64 @@ export default function WantListPage() {
                 Note: Full card selection will be available once the backend API is implemented.
                 For now, you can test the form structure.
               </p>
-              <Input
-                label="Card ID"
-                type="text"
-                value={formData.itemId}
-                onChange={(e) => setFormData({ ...formData, itemId: e.target.value })}
-                placeholder="Card ID (will be replaced with search)"
-              />
+              <div>
+                <label className="text-sm font-medium">Search card</label>
+                <Input
+                  type="text"
+                  value={cardQuery}
+                  onChange={(e) => {
+                    setCardQuery(e.target.value)
+                    setSelectedCard(null)
+                    setFormData({ ...formData, itemId: '' })
+                  }}
+                  placeholder="Type card name or collector number..."
+                />
+
+                {/* Dropdown results */}
+                {cardQuery.trim().length >= 2 && (
+                  <div className="mt-2 max-h-64 overflow-auto rounded-md border bg-white shadow-sm">
+                    {searchLoading ? (
+                      <div className="p-3 text-sm text-gray-500">Searching...</div>
+                    ) : searchError ? (
+                      <div className="p-3 text-sm text-red-600">{searchError}</div>
+                    ) : searchResults.length === 0 ? (
+                      <div className="p-3 text-sm text-gray-500">No results</div>
+                    ) : (
+                      searchResults.map((card) => (
+                        <div
+                          key={card.id}
+                          className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-gray-50"
+                          onClick={() => {
+                            setSelectedCard(card)
+                            setFormData({ ...formData, itemId: card.id })
+                            setCardQuery('')
+                            setSearchResults([])
+                          }}
+                        >
+                          {card.image_uris?.small ? (
+                            <img src={card.image_uris.small} alt={card.name} className="h-10 w-8 object-contain" />
+                          ) : (
+                            <div className="h-10 w-8 bg-gray-100" />
+                          )}
+                          <div className="flex-1 text-sm">
+                            <div className="font-medium">{card.name}</div>
+                            <div className="text-xs text-gray-500">{card.set} • #{card.collector_number}</div>
+                          </div>
+                          <div className="text-xs text-gray-400">Select</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Selected card preview */}
+                {selectedCard && (
+                  <div className="mt-3 rounded-md bg-gray-50 p-3">
+                    <div className="text-sm font-medium">Selected</div>
+                    <div className="text-xs text-gray-600">{selectedCard.name} • {selectedCard.set} #{selectedCard.collector_number}</div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <Input
@@ -402,7 +512,7 @@ export default function WantListPage() {
                     type="button"
                     onClick={() => toggleLanguage(lang)}
                     className={`rounded-md px-3 py-1 text-sm border transition-colors ${
-                      formData.languageOk.includes(lang)
+                      (formData.languageOk ?? []).includes(lang)
                         ? 'bg-blue-100 border-blue-300 text-blue-800'
                         : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
                     }`}
@@ -421,7 +531,7 @@ export default function WantListPage() {
                     type="button"
                     onClick={() => toggleFinish(finish)}
                     className={`rounded-md px-3 py-1 text-sm border transition-colors capitalize ${
-                      formData.finishOk.includes(finish)
+                      (formData.finishOk ?? []).includes(finish)
                         ? 'bg-blue-100 border-blue-300 text-blue-800'
                         : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
                     }`}
@@ -499,19 +609,19 @@ export default function WantListPage() {
                 <label className="mb-2 block text-sm font-medium">Accepted Languages</label>
                 <div className="flex flex-wrap gap-2">
                   {['en', 'es', 'fr', 'de', 'it', 'pt', 'ja', 'ko', 'ru', 'zhs'].map(lang => (
-                    <button
-                      key={lang}
-                      type="button"
-                      onClick={() => toggleLanguage(lang)}
-                      className={`rounded-md px-3 py-1 text-sm border transition-colors ${
-                        formData.languageOk.includes(lang)
-                          ? 'bg-blue-100 border-blue-300 text-blue-800'
-                          : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
-                      }`}
-                    >
-                      {lang.toUpperCase()}
-                    </button>
-                  ))}
+                      <button
+                        key={lang}
+                        type="button"
+                        onClick={() => toggleLanguage(lang)}
+                        className={`rounded-md px-3 py-1 text-sm border transition-colors ${
+                          (formData.languageOk ?? []).includes(lang)
+                            ? 'bg-blue-100 border-blue-300 text-blue-800'
+                            : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {lang.toUpperCase()}
+                      </button>
+                    ))}
                 </div>
               </div>
               <div>
@@ -523,7 +633,7 @@ export default function WantListPage() {
                       type="button"
                       onClick={() => toggleFinish(finish)}
                       className={`rounded-md px-3 py-1 text-sm border transition-colors capitalize ${
-                        formData.finishOk.includes(finish)
+                        (formData.finishOk ?? []).includes(finish)
                           ? 'bg-blue-100 border-blue-300 text-blue-800'
                           : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
                       }`}

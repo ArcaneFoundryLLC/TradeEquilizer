@@ -73,7 +73,25 @@ export async function GET(request: NextRequest) {
     ipLastRequestAt.set(ip, Date.now())
 
     if (!upstream.ok) {
-      const text = await upstream.text()
+      const text = await upstream.text().catch(() => '')
+
+      // If Scryfall returned a 404 "not_found" (no matching cards), treat it as an empty
+      // result set for the frontend autocomplete instead of surfacing an error.
+      // Scryfall returns a JSON error object for 404s, so try to detect that.
+      if (upstream.status === 404) {
+        try {
+          // Prefer returning the Scryfall shape the client expects: { data: [] }
+          return NextResponse.json({ data: [] }, {
+            headers: {
+              'Cache-Control': 'public, max-age=30',
+            },
+          })
+        } catch (e) {
+          // Fall through to return a safe empty result
+          return NextResponse.json({ data: [] }, { headers: { 'Cache-Control': 'public, max-age=30' } })
+        }
+      }
+
       return NextResponse.json(
         { error: 'Upstream error', status: upstream.status, details: text },
         { status: 502 }

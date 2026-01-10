@@ -11,8 +11,20 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   const body = await request.json()
   if (!body) return NextResponse.json({ error: 'Missing request body' }, { status: 400 })
 
-  const inventoryId = params.id
-  const updates = body
+  // Next.js may supply `params` as a thenable — await it before using properties
+  const awaitedParams: any = await (params as any)
+  const inventoryId = awaitedParams.id
+
+  // Sanitize and map incoming fields (frontend uses camelCase; DB uses snake_case)
+  const raw: any = body
+  const updates: any = {}
+  if ('itemId' in raw) updates.item_id = raw.itemId
+  if ('quantity' in raw) updates.quantity = raw.quantity
+  if ('condition' in raw) updates.condition = raw.condition
+  if ('language' in raw) updates.language = raw.language
+  if ('finish' in raw) updates.finish = raw.finish
+  if ('tradable' in raw) updates.tradable = raw.tradable
+  if ('acquiredAt' in raw) updates.acquired_at = raw.acquiredAt
 
   try {
     const supa: any = client
@@ -68,7 +80,9 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const inventoryId = params.id
+  // Await params in case Next provides a thenable
+  const awaitedParams: any = await (params as any)
+  const inventoryId = awaitedParams.id
   try {
     const supa: any = client
     const { data: deleted, error: deleteError } = await supa

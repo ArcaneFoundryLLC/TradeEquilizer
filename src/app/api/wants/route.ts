@@ -188,8 +188,31 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Database error', details }, { status: 500 });
     }
 
-    const created = Array.isArray(inserted) ? inserted[0] : inserted;
-    return NextResponse.json(created ?? newWant, { status: 201 });
+        const created = Array.isArray(inserted) ? inserted[0] : inserted;
+
+        // Fetch item metadata to return the same enriched shape as GET/getWantList
+        try {
+            const { data: itemRow } = await supa.from('items').select('id, scryfall_id, name, set_code, collector_number, image_url').eq('id', created.item_id).maybeSingle()
+
+            const responseObj = {
+                id: String(created.id),
+                itemId: String(created.item_id),
+                itemName: itemRow?.name ?? '',
+                itemSet: itemRow?.set_code ?? '',
+                itemCollectorNumber: itemRow?.collector_number ?? '',
+                itemImageUrl: itemRow?.image_url ?? null,
+                quantity: created.quantity,
+                minCondition: created.min_condition,
+                languageOk: created.language_ok ?? [],
+                finishOk: created.finish_ok ?? [],
+                priority: created.priority,
+            }
+
+            return NextResponse.json(responseObj, { status: 201 })
+        } catch (e) {
+            console.error('Error fetching item metadata for new want:', e)
+            return NextResponse.json(created ?? newWant, { status: 201 })
+        }
 }
 
 export async function PUT(request: NextRequest) {
@@ -263,7 +286,30 @@ export async function PUT(request: NextRequest) {
         return NextResponse.json({ error: 'Want not found' }, { status: 404 });
     }
 
-    return NextResponse.json({message: 'Want updated'}, {status: 200});
+        const updatedRow = Array.isArray(updated) ? updated[0] : updated;
+
+        try {
+            const { data: itemRow } = await supa.from('items').select('id, scryfall_id, name, set_code, collector_number, image_url').eq('id', updatedRow.item_id).maybeSingle()
+
+            const responseObj = {
+                id: String(updatedRow.id),
+                itemId: String(updatedRow.item_id),
+                itemName: itemRow?.name ?? '',
+                itemSet: itemRow?.set_code ?? '',
+                itemCollectorNumber: itemRow?.collector_number ?? '',
+                itemImageUrl: itemRow?.image_url ?? null,
+                quantity: updatedRow.quantity,
+                minCondition: updatedRow.min_condition,
+                languageOk: updatedRow.language_ok ?? [],
+                finishOk: updatedRow.finish_ok ?? [],
+                priority: updatedRow.priority,
+            }
+
+            return NextResponse.json(responseObj, { status: 200 })
+        } catch (e) {
+            console.error('Error fetching item metadata for updated want:', e)
+            return NextResponse.json({message: 'Want updated'}, {status: 200});
+        }
 }
 
 export async function DELETE(request: NextRequest) {
