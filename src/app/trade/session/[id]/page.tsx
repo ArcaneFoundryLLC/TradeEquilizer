@@ -3,7 +3,7 @@
 import { useState, useEffect, use } from 'react'
 import { useRouter } from 'next/navigation'
 import QRCode from 'qrcode'
-import { TradeSession } from '@/types'
+import { TradeSession, TradeProposal, TradeItem } from '@/types'
 
 export default function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params)
@@ -14,10 +14,19 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [error, setError] = useState<string | null>(null)
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('')
   const [timeRemaining, setTimeRemaining] = useState<string>('')
+  
+  // Proposal state
+  const [proposals, setProposals] = useState<TradeProposal[]>([])
+  const [showCreateProposal, setShowCreateProposal] = useState(false)
+  const [proposalLoading, setProposalLoading] = useState(false)
 
   useEffect(() => {
     fetchSession()
-    const interval = setInterval(fetchSession, 5000) // Poll every 5 seconds
+    fetchProposals()
+    const interval = setInterval(() => {
+      fetchSession()
+      fetchProposals()
+    }, 5000) // Poll every 5 seconds
     return () => clearInterval(interval)
   }, [resolvedParams.id])
 
@@ -75,6 +84,20 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     }
   }
 
+  const fetchProposals = async () => {
+    try {
+      const response = await fetch(`/api/trades/proposals?sessionId=${resolvedParams.id}`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          setProposals(data.proposals || [])
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching proposals:', err)
+    }
+  }
+
   const cancelSession = async () => {
     if (!confirm('Are you sure you want to cancel this session?')) {
       return
@@ -93,6 +116,32 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       router.push('/trade')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
+    }
+  }
+
+  const respondToProposal = async (proposalId: string, action: 'accept' | 'reject', rejectionReason?: string) => {
+    setProposalLoading(true)
+    try {
+      const response = await fetch(`/api/trades/proposals/${proposalId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, rejectionReason })
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        await fetchProposals()
+        await fetchSession()
+        if (action === 'accept') {
+          alert('Trade accepted! The session is now complete.')
+        }
+      } else {
+        alert(data.error || 'Failed to respond to proposal')
+      }
+    } catch (err) {
+      alert('Error responding to proposal')
+    } finally {
+      setProposalLoading(false)
     }
   }
 
@@ -130,10 +179,14 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const isExpired = new Date(session.expiresAt) < new Date()
   const isWaiting = session.status === 'waiting'
   const isConnected = session.status === 'connected'
+  const isCompleted = session.status === 'completed'
+
+  const pendingProposals = proposals.filter(p => p.status === 'pending')
+  const completedProposals = proposals.filter(p => p.status !== 'pending')
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-4xl mx-auto px-4">
+      <div className="max-w-6xl mx-auto px-4">
         <div className="bg-white rounded-lg shadow-md p-6">
           <div className="flex justify-between items-start mb-6">
             <div>
@@ -174,7 +227,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             </div>
           )}
 
-          <div className="grid md:grid-cols-2 gap-6">
+          <div className="grid lg:grid-cols-2 gap-6">
             {/* QR Code Section */}
             {isCreator && isWaiting && !isExpired && (
               <div className="border border-gray-200 rounded-lg p-6">
@@ -254,6 +307,99 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             </div>
           )}
 
+          {isCompleted && (
+            <div className="mt-6 p-4 bg-gray-50 border border-gray-200 rounded-md">
+              <p className="text-gray-900 font-medium">
+                ✓ Trade completed successfully!
+              </p>
+              <p className="text-gray-700 text-sm mt-1">
+                This session has been completed. Check your trade history for details.
+              </p>
+            </div>
+          )}
+
+          {/* Trade Proposals Section */}
+          {(isConnected || isCompleted) && (
+            <div className="mt-8">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">Trade Proposals</h2>
+                {isConnected && !showCreateProposal && (
+                  <button
+                    onClick={() => setShowCreateProposal(true)}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  >
+                    Create Proposal
+                  </button>
+                )}
+              </div>
+
+              {/* Create Proposal Form */}
+              {showCreateProposal && (
+                <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-medium text-blue-900">Create New Proposal</h3>
+                    <button
+                      onClick={() => setShowCreateProposal(false)}
+                      className="text-blue-600 hover:text-blue-800"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <p className="text-blue-800 text-sm mb-4">
+                    Proposal creation UI coming soon! This will include:
+                  </p>
+                  <ul className="text-blue-800 text-sm space-y-1 ml-4">
+                    <li>• Card search and selection</li>
+                    <li>• Inventory browsing</li>
+                    <li>• Real-time value calculation</li>
+                    <li>• Fairness validation</li>
+                  </ul>
+                </div>
+              )}
+
+              {/* Pending Proposals */}
+              {pendingProposals.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-3">Pending Proposals</h3>
+                  <div className="space-y-4">
+                    {pendingProposals.map((proposal) => (
+                      <ProposalCard 
+                        key={proposal.id} 
+                        proposal={proposal} 
+                        onRespond={respondToProposal}
+                        loading={proposalLoading}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Completed Proposals */}
+              {completedProposals.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900 mb-3">Proposal History</h3>
+                  <div className="space-y-4">
+                    {completedProposals.map((proposal) => (
+                      <ProposalCard 
+                        key={proposal.id} 
+                        proposal={proposal} 
+                        onRespond={respondToProposal}
+                        loading={false}
+                        readonly
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {proposals.length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  No proposals yet. Create the first proposal to start trading!
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="mt-6 flex gap-4">
             <button
               onClick={() => router.push('/trade')}
@@ -261,17 +407,174 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             >
               Back to Trade
             </button>
-            {isConnected && (
-              <button
-                onClick={() => alert('Trade proposal feature coming soon!')}
-                className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-              >
-                Propose Trade
-              </button>
-            )}
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// Proposal Card Component
+function ProposalCard({ 
+  proposal, 
+  onRespond, 
+  loading, 
+  readonly = false 
+}: { 
+  proposal: TradeProposal
+  onRespond: (id: string, action: 'accept' | 'reject', reason?: string) => void
+  loading: boolean
+  readonly?: boolean
+}) {
+  const [showRejectReason, setShowRejectReason] = useState(false)
+  const [rejectionReason, setRejectionReason] = useState('')
+
+  const isExpired = new Date(proposal.expiresAt) < new Date()
+  const canRespond = proposal.status === 'pending' && !isExpired && !readonly
+
+  const handleReject = () => {
+    if (showRejectReason) {
+      onRespond(proposal.id, 'reject', rejectionReason)
+      setShowRejectReason(false)
+      setRejectionReason('')
+    } else {
+      setShowRejectReason(true)
+    }
+  }
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-4">
+      <div className="flex justify-between items-start mb-4">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`px-2 py-1 rounded text-xs font-medium ${
+              proposal.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+              proposal.status === 'accepted' ? 'bg-green-100 text-green-800' :
+              proposal.status === 'rejected' ? 'bg-red-100 text-red-800' :
+              'bg-gray-100 text-gray-800'
+            }`}>
+              {proposal.status.charAt(0).toUpperCase() + proposal.status.slice(1)}
+            </span>
+            {isExpired && proposal.status === 'pending' && (
+              <span className="px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
+                Expired
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-600">
+            Created: {new Date(proposal.createdAt).toLocaleString()}
+          </p>
+          {proposal.expiresAt && proposal.status === 'pending' && (
+            <p className="text-sm text-gray-600">
+              Expires: {new Date(proposal.expiresAt).toLocaleString()}
+            </p>
+          )}
+        </div>
+        <div className="text-right">
+          <div className="text-sm text-gray-600">Fairness</div>
+          <div className={`text-lg font-semibold ${
+            Math.abs(proposal.fairnessPercentage) <= 5 ? 'text-green-600' :
+            Math.abs(proposal.fairnessPercentage) <= 10 ? 'text-yellow-600' :
+            'text-red-600'
+          }`}>
+            {proposal.fairnessPercentage > 0 ? '+' : ''}{proposal.fairnessPercentage}%
+          </div>
+        </div>
+      </div>
+
+      {proposal.message && (
+        <div className="mb-4 p-3 bg-gray-50 rounded-md">
+          <p className="text-sm text-gray-700">{proposal.message}</p>
+        </div>
+      )}
+
+      <div className="grid md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <h4 className="font-medium text-gray-900 mb-2">
+            Proposer Items (${proposal.proposerTotalValue.toFixed(2)})
+          </h4>
+          {proposal.proposerItems.length > 0 ? (
+            <div className="space-y-1">
+              {proposal.proposerItems.map((item, index) => (
+                <div key={index} className="text-sm text-gray-600">
+                  {item.quantity}x {item.name || `Item ${item.itemId}`} ({item.condition}, {item.finish})
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 italic">No items</p>
+          )}
+        </div>
+        <div>
+          <h4 className="font-medium text-gray-900 mb-2">
+            Recipient Items (${proposal.recipientTotalValue.toFixed(2)})
+          </h4>
+          {proposal.recipientItems.length > 0 ? (
+            <div className="space-y-1">
+              {proposal.recipientItems.map((item, index) => (
+                <div key={index} className="text-sm text-gray-600">
+                  {item.quantity}x {item.name || `Item ${item.itemId}`} ({item.condition}, {item.finish})
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 italic">No items</p>
+          )}
+        </div>
+      </div>
+
+      {proposal.rejectionReason && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+          <p className="text-sm text-red-800">
+            <strong>Rejection reason:</strong> {proposal.rejectionReason}
+          </p>
+        </div>
+      )}
+
+      {showRejectReason && (
+        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Rejection Reason (optional)
+          </label>
+          <textarea
+            value={rejectionReason}
+            onChange={(e) => setRejectionReason(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            rows={3}
+            placeholder="Why are you rejecting this proposal?"
+          />
+        </div>
+      )}
+
+      {canRespond && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => onRespond(proposal.id, 'accept')}
+            disabled={loading}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm"
+          >
+            {loading ? 'Processing...' : 'Accept'}
+          </button>
+          <button
+            onClick={handleReject}
+            disabled={loading}
+            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
+          >
+            {showRejectReason ? 'Confirm Reject' : 'Reject'}
+          </button>
+          {showRejectReason && (
+            <button
+              onClick={() => {
+                setShowRejectReason(false)
+                setRejectionReason('')
+              }}
+              className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 text-sm"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
