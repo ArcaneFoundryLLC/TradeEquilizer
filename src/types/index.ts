@@ -59,4 +59,101 @@ export interface TradeSession {
   eventId?: string;
   expiresAt: Date;
   createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CreateSessionRequest {
+  game?: 'mtg';
+  priceSource?: 'tcgplayer_market';
+  fairnessThreshold?: number;
+  eventId?: string;
+}
+
+export interface JoinSessionRequest {
+  qrCode: string;
+}
+
+export interface SessionResponse {
+  session: TradeSession;
+  isCreator: boolean;
+}
+
+// Trade Proposal Types
+export interface TradeProposal {
+  id: string
+  sessionId: string
+  proposerId: string
+  recipientId: string
+  proposerItems: TradeItem[]
+  recipientItems: TradeItem[]
+  proposerTotalValue: number
+  recipientTotalValue: number
+  fairnessPercentage: number
+  priceVersion: string
+  status: 'pending' | 'accepted' | 'rejected' | 'expired' | 'cancelled'
+  message?: string
+  rejectionReason?: string
+  createdAt: string
+  updatedAt: string
+  expiresAt: string
+  respondedAt?: string
+}
+
+export interface TradeItem {
+  itemId: string
+  quantity: number
+  condition: 'NM' | 'LP' | 'MP' | 'HP'
+  language: string
+  finish: 'normal' | 'foil' | 'etched' | 'showcase'
+  // Populated from items table
+  name?: string
+  set?: string
+  imageUrl?: string
+  currentPrice?: number
+}
+
+export interface ItemReservation {
+  id: string
+  userId: string
+  itemId: string
+  quantity: number
+  condition: 'NM' | 'LP' | 'MP' | 'HP'
+  language: string
+  finish: 'normal' | 'foil' | 'etched' | 'showcase'
+  proposalId?: string
+  sessionId: string
+  reservedAt: string
+  expiresAt: string
+}
+
+// Trade Proposal API Types
+export interface CreateProposalRequest {
+  sessionId: string
+  recipientId: string
+  proposerItems: TradeItem[]
+  recipientItems: TradeItem[]
+  message?: string
+}
+
+export interface CreateProposalResponse {
+  success: boolean
+  proposal?: TradeProposal
+  error?: string
+}
+
+export interface RespondToProposalRequest {
+  action: 'accept' | 'reject'
+  rejectionReason?: string
+}
+
+export interface RespondToProposalResponse {
+  success: boolean
+  proposal?: TradeProposal
+  error?: string
+}
+
+export interface ProposalListResponse {
+  success: boolean
+  proposals?: TradeProposal[]
+  error?: string
 }

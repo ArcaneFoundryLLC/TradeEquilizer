@@ -23,26 +23,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
 
   useEffect(() => {
-    // Get initial session
+    // Get initial session with error handling
     const getInitialSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      setSession(session)
-      setUser(session?.user ?? null)
-      setLoading(false)
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession()
+        if (error) {
+          console.warn('Supabase auth session error:', error.message)
+        }
+        setSession(session)
+        setUser(session?.user ?? null)
+      } catch (error) {
+        console.warn('Failed to get initial session:', error)
+        // Continue without auth if Supabase is unreachable
+        setSession(null)
+        setUser(null)
+      } finally {
+        setLoading(false)
+      }
     }
 
     getInitialSession()
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        setSession(session)
-        setUser(session?.user ?? null)
-        setLoading(false)
-      }
-    )
+    // Listen for auth changes with error handling
+    try {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          setSession(session)
+          setUser(session?.user ?? null)
+          setLoading(false)
+        }
+      )
 
-    return () => subscription.unsubscribe()
+      return () => subscription.unsubscribe()
+    } catch (error) {
+      console.warn('Failed to set up auth state listener:', error)
+      setLoading(false)
+    }
   }, [supabase.auth])
 
   const signIn = async (email: string, password: string) => {
