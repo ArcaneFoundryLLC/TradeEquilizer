@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
-export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(
+  request: NextRequest, 
+  { params }: { params: Promise<{ id: string }> }) {
+    const { id: inventoryId } = await params
   const client = await createClient()
   const { data: userData, error: userError } = await client.auth.getUser()
   if (userError || !userData.user) {
@@ -10,10 +13,6 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
 
   const body = await request.json()
   if (!body) return NextResponse.json({ error: 'Missing request body' }, { status: 400 })
-
-  // Next.js may supply `params` as a thenable — await it before using properties
-  const awaitedParams: any = await (params as any)
-  const inventoryId = awaitedParams.id
 
   // Sanitize and map incoming fields (frontend uses camelCase; DB uses snake_case)
   const raw: any = body
@@ -73,16 +72,14 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   }
 }
 
-export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id: inventoryId } = await params
   const client = await createClient()
   const { data: userData, error: userError } = await client.auth.getUser()
   if (userError || !userData.user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Await params in case Next provides a thenable
-  const awaitedParams: any = await (params as any)
-  const inventoryId = awaitedParams.id
   try {
     const supa: any = client
     const { data: deleted, error: deleteError } = await supa
