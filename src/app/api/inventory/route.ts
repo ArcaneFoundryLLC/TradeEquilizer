@@ -131,9 +131,9 @@ export async function POST(request: NextRequest) {
       }
       const card = await sfRes.json()
 
-      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-        console.error('SUPABASE_SERVICE_ROLE_KEY is not set; cannot insert item')
-        return NextResponse.json({ error: 'Server configuration error', details: 'Missing SUPABASE_SERVICE_ROLE_KEY' }, { status: 500 })
+      if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+        console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set; cannot insert item')
+        return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
       }
       const svc = await createServiceClient()
       const { data: newItem, error: insertErr } = await (svc as any)
@@ -165,9 +165,9 @@ export async function POST(request: NextRequest) {
   try {
     const { data: existingUser } = await supa.from('users').select('id').eq('id', userData.user.id).maybeSingle()
     if (!existingUser) {
-      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-        console.error('SUPABASE_SERVICE_ROLE_KEY is not set; cannot create users row')
-        return NextResponse.json({ error: 'Server configuration error', details: 'Missing SUPABASE_SERVICE_ROLE_KEY' }, { status: 500 })
+      if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+        console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set; cannot create users row')
+        return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
       }
       try {
         const svc = await createServiceClient()

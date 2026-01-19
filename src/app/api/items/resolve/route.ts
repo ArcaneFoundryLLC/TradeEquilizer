@@ -40,8 +40,8 @@ export async function GET(request: NextRequest) {
 
       const card = await sfRes.json()
 
-      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-        console.error('SUPABASE_SERVICE_ROLE_KEY not set; cannot insert item')
+      if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+        console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY not set; cannot insert item')
         return NextResponse.json({ error: 'Server configuration error' }, { status: 500 })
       }
 

@@ -96,9 +96,9 @@ export async function POST(request: NextRequest) {
                         // service role client to bypass row level security for items.
                         let newItem: any = null
                                     try {
-                                        if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-                                            console.error('SUPABASE_SERVICE_ROLE_KEY is not set in server environment')
-                                            return NextResponse.json({ error: 'Server configuration error', details: 'Missing SUPABASE_SERVICE_ROLE_KEY' }, { status: 500 })
+                                        if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+                                            console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set in server environment')
+                                            return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
                                         }
                                         const service = await createServiceClient()
                             const { data, error: insertItemError } = await (service as any)
@@ -141,9 +141,9 @@ export async function POST(request: NextRequest) {
         try {
             const { data: existingUser } = await supa.from('users').select('id').eq('id', userData.user.id).maybeSingle();
             if (!existingUser) {
-                if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-                    console.error('SUPABASE_SERVICE_ROLE_KEY is not set; cannot create users row')
-                    return NextResponse.json({ error: 'Server configuration error', details: 'Missing SUPABASE_SERVICE_ROLE_KEY' }, { status: 500 })
+                if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+                    console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set; cannot create users row')
+                    return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
                 }
                 try {
                     const svc = await createServiceClient()
@@ -252,7 +252,7 @@ export async function PUT(request: NextRequest) {
         // or it exists but belongs to a different user (RLS prevented update).
         // Try to detect which case using the service role client (no RLS).
         try {
-            if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+            if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
                 // Can't check ownership without service key; return generic 404
                 return NextResponse.json({ error: 'Want not found' }, { status: 404 });
             }
