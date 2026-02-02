@@ -65,14 +65,16 @@ export default function MarketPricingPage() {
   useEffect(() => {
     const fetchSyncStatus = async () => {
       try {
-        // This would come from a status endpoint
-        // For now, we'll use a placeholder
-        setSyncStatus({
-          lastSync: null,
-          status: 'idle',
-          totalItems: 0,
-          syncedItems: 0,
-        })
+        const response = await fetch('/api/prices/sync')
+        if (response.ok) {
+          const data = await response.json()
+          setSyncStatus({
+            lastSync: data.lastSync,
+            status: 'idle',
+            totalItems: 0,
+            syncedItems: 0,
+          })
+        }
       } catch (err) {
         console.warn('Sync status API not available:', err)
       }
@@ -209,8 +211,12 @@ export default function MarketPricingPage() {
         throw new Error('Failed to sync prices')
       }
 
+      // Fetch the updated last sync time from the server
+      const statusResponse = await fetch('/api/prices/last-sync')
+      const statusData = statusResponse.ok ? await statusResponse.json() : { lastSync: null }
+
       setSyncStatus({
-        lastSync: new Date().toISOString(),
+        lastSync: statusData.lastSync || new Date().toISOString(),
         status: 'success',
         totalItems: 0,
         syncedItems: 0,

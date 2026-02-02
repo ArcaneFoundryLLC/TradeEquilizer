@@ -14,6 +14,35 @@ type ItemRow = {
   scryfall_id: string | null
 }
 
+export async function GET() {
+  try {
+    const supabase = await createServiceClient()
+
+    // Get the most recent price sync timestamp from the database
+    const { data, error } = await supabase
+      .from('prices')
+      .select('as_of')
+      .order('as_of', { ascending: false })
+      .limit(1)
+      .single<{ as_of: string }>()
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        // No records found
+        return NextResponse.json({ lastSync: null })
+      }
+      console.error('Failed to fetch last sync time', error)
+      return NextResponse.json({ error: 'Failed to fetch last sync time' }, { status: 500 })
+    }
+
+    return NextResponse.json({ lastSync: data?.as_of || null })
+  } catch (e) {
+    console.error('Last sync fetch failed:', e)
+    return NextResponse.json({ error: 'Last sync fetch failed', details: String(e) }, { status: 500 })
+  }
+}
+
+
 // Generate mock price (keeps 'tcgplayer_market' as source for DB compatibility)
 function generateMockPriceForInsert(item: ItemRow, version: string) {
   let basePrice = 1.0
