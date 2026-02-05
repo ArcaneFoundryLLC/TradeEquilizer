@@ -157,3 +157,151 @@ export interface ProposalListResponse {
   proposals?: TradeProposal[]
   error?: string
 }
+// PDF Receipt Generation Types
+export interface TradeSnapshot {
+  id: string
+  tradeId: string
+  sessionId: string
+  
+  // Participants
+  proposerId: string
+  recipientId: string
+  proposerName: string
+  recipientName: string
+  
+  // Trade Items
+  proposerItems: TradeItem[]
+  recipientItems: TradeItem[]
+  
+  // Pricing Information
+  proposerTotalValue: number
+  recipientTotalValue: number
+  fairnessPercentage: number
+  priceVersion: string
+  priceTimestamp: string
+  priceSource: 'tcgplayer_market' | 'buylist'
+  
+  // Manual Overrides
+  manualOverrides: ManualOverride[]
+  fairnessAdjustments: FairnessAdjustment[]
+  
+  // Metadata
+  completedAt: string
+  snapshotHash: string
+  integrityVerified: boolean
+  
+  // Audit Trail
+  createdAt: string
+  createdBy: string
+}
+
+export interface ManualOverride {
+  id: string
+  itemId: string
+  originalPrice: number
+  overridePrice: number
+  reason: string
+  appliedBy: string
+  appliedAt: string
+}
+
+export interface FairnessAdjustment {
+  id: string
+  originalFairness: number
+  adjustedFairness: number
+  reason: string
+  appliedBy: string
+  appliedAt: string
+}
+
+export interface Receipt {
+  id: string
+  tradeSnapshotId: string
+  userId: string
+  
+  // PDF Details
+  pdfUrl: string
+  pdfSize: number
+  generatedAt: string
+  
+  // Email Details
+  emailSent: boolean
+  emailSentAt?: string
+  emailRetries: number
+  
+  // Status
+  status: 'generating' | 'ready' | 'failed' | 'queued'
+  errorMessage?: string
+  
+  // Metadata
+  createdAt: string
+  expiresAt: string
+}
+
+export interface ReceiptQueue {
+  id: string
+  tradeId: string
+  userId: string
+  priority: 'normal' | 'high'
+  
+  // Queue Status
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  attempts: number
+  maxAttempts: number
+  
+  // Timing
+  scheduledAt: string
+  processedAt?: string
+  nextRetryAt?: string
+  
+  // Error Handling
+  lastError?: string
+  errorCount: number
+  
+  // Metadata
+  createdAt: string
+  expiresAt: string
+}
+
+// Receipt API Types
+export interface GenerateReceiptRequest {
+  tradeId: string
+  emailDelivery?: boolean
+}
+
+export interface GenerateReceiptResponse {
+  success: boolean
+  receipt?: Receipt
+  error?: string
+}
+
+export interface ReceiptListResponse {
+  success: boolean
+  receipts?: Receipt[]
+  error?: string
+}
+
+export interface ReceiptData {
+  tradeSnapshot: TradeSnapshot
+  participants: {
+    proposer: User
+    recipient: User
+  }
+  items: {
+    proposer: (TradeItem & Item)[]
+    recipient: (TradeItem & Item)[]
+  }
+  pricing: {
+    proposerTotal: number
+    recipientTotal: number
+    fairness: number
+    priceVersion: string
+    timestamp: string
+  }
+  metadata: {
+    tradeId: string
+    sessionId: string
+    completedAt: string
+    generatedAt: string
+  }
+}
