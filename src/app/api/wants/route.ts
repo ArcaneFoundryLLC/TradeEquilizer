@@ -253,7 +253,7 @@ export async function PUT(request: NextRequest) {
         // Try to detect which case using the service role client (no RLS).
         try {
             if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-                // Can't check ownership without service key; return generic 404
+                // Can't check ownership without anon key; return generic 404
                 return NextResponse.json({ error: 'Want not found' }, { status: 404 });
             }
             const svc = await createServiceClient()
