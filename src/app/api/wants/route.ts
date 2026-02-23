@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { wantSummary } from '@/types/want'
-import { Database } from '@/types/supabase'
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/server';
 import { getWantList } from './wantList'
-import next from 'next';
 
 
 export async function GET(){
@@ -100,7 +98,7 @@ export async function POST(request: NextRequest) {
                                             console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set in server environment')
                                             return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
                                         }
-                                        const service = await createServiceClient()
+                                        const service = await createClient()
                             const { data, error: insertItemError } = await (service as any)
                                 .from('items')
                                 .insert({
@@ -146,7 +144,7 @@ export async function POST(request: NextRequest) {
                     return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
                 }
                 try {
-                    const svc = await createServiceClient()
+                    const svc = await createClient()
                     const upsertPayload = {
                         id: userData.user.id,
                         email: userData.user.email,
@@ -233,7 +231,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const wantId = body.id;
-    const updates: Partial<Database['public']['Tables']['wants']['Update']> = body;
+    const updates: any = body;
     delete updates.id; 
         const supa: any = client
         const { data: updated, error: updateError } = await supa
@@ -256,7 +254,7 @@ export async function PUT(request: NextRequest) {
                 // Can't check ownership without anon key; return generic 404
                 return NextResponse.json({ error: 'Want not found' }, { status: 404 });
             }
-            const svc = await createServiceClient()
+            const svc = await createClient()
             const { data: existingWant } = await (svc as any)
                 .from('wants')
                 .select('id, user_id')

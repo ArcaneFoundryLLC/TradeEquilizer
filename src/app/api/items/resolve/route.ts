@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createClient} from '@/lib/supabase/server'
 
 // GET /api/items/resolve?id=<id-or-scryfall-id>
 export async function GET(request: NextRequest) {
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Server configuration error' }, { status: 500 })
       }
 
-      const svc = await createServiceClient()
+      const svc = await createClient()
       const { data: newItem, error: insertErr } = await (svc as any)
         .from('items')
         .insert({

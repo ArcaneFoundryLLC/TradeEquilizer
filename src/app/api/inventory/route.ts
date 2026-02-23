@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createClient} from '@/lib/supabase/server'
 
 export async function GET() {
   const client = await createClient()
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
         console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set; cannot insert item')
         return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
       }
-      const svc = await createServiceClient()
+      const svc = await createClient()
       const { data: newItem, error: insertErr } = await (svc as any)
         .from('items')
         .insert({
@@ -170,7 +170,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
       }
       try {
-        const svc = await createServiceClient()
+        const svc = await createClient()
         const upsertPayload = {
           id: userData.user.id,
           email: userData.user.email,
