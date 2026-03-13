@@ -82,10 +82,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const signInWithMagicLink = async (email: string) => {
+    // Use environment variable for production, fallback to current origin
+    const redirectUrl = process.env.NEXT_PUBLIC_SITE_URL 
+      ? `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`
+      : `${window.location.origin}/auth/callback`
+    
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: redirectUrl,
       },
     })
     return { error }
