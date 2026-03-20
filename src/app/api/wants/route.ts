@@ -90,37 +90,32 @@ export async function POST(request: NextRequest) {
 
             const card = await sfRes.json();
 
-                        // Insert a minimal items row required by the schema. Use the
-                        // service role client to bypass row level security for items.
-                        let newItem: any = null
-                                    try {
-                                        if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-                                            console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set in server environment')
-                                            return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
-                                        }
-                                        const service = await createClient()
-                            const { data, error: insertItemError } = await (service as any)
-                                .from('items')
-                                .insert({
-                                    scryfall_id: card.id,
-                                    name: card.name ?? 'Unknown',
-                                    set_code: (card.set as string) ?? 'unknown',
-                                    collector_number: card.collector_number ?? '0',
-                                    image_url: card.image_uris?.normal ?? null,
-                                })
-                                .select()
-                                .maybeSingle()
+            // Insert a minimal items row. Authenticated users can insert
+            // items via RLS policy (008_fix_rls_items_users.sql).
+            let newItem: any = null
+            try {
+                const { data, error: insertItemError } = await supa
+                    .from('items')
+                    .insert({
+                        scryfall_id: card.id,
+                        name: card.name ?? 'Unknown',
+                        set_code: (card.set as string) ?? 'unknown',
+                        collector_number: card.collector_number ?? '0',
+                        image_url: card.image_uris?.normal ?? null,
+                    })
+                    .select()
+                    .maybeSingle()
 
-                            if (insertItemError) {
-                                console.error('Failed to insert item from Scryfall (service):', insertItemError)
-                                return NextResponse.json({ error: 'Database error', details: (insertItemError as any)?.message ?? insertItemError }, { status: 500 })
-                            }
+                if (insertItemError) {
+                    console.error('Failed to insert item from Scryfall:', insertItemError)
+                    return NextResponse.json({ error: 'Database error', details: (insertItemError as any)?.message ?? insertItemError }, { status: 500 })
+                }
 
-                            newItem = data
-                        } catch (e) {
-                            console.error('Error inserting item with service client:', e)
-                            return NextResponse.json({ error: 'Database error', details: String(e) }, { status: 500 })
-                        }
+                newItem = data
+            } catch (e) {
+                console.error('Error inserting item:', e)
+                return NextResponse.json({ error: 'Database error', details: String(e) }, { status: 500 })
+            }
 
                         resolvedItemId = newItem?.id ?? null;
             if (!resolvedItemId) {
@@ -133,37 +128,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Now insert the want using the resolved items.id
-        // Ensure there is an application `users` row for this auth user. The
-        // `users` table has RLS policies so we use the service client to upsert
-        // a minimal record if it doesn't exist.
+        // Ensure there is an application `users` row for this auth user.
+        // RLS policy (008_fix_rls_items_users.sql) allows users to insert their own row.
         try {
             const { data: existingUser } = await supa.from('users').select('id').eq('id', userData.user.id).maybeSingle();
             if (!existingUser) {
-                if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-                    console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set; cannot create users row')
-                    return NextResponse.json({ error: 'Server configuration error', details: 'Missing NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
-                }
-                try {
-                    const svc = await createClient()
-                    const upsertPayload = {
-                        id: userData.user.id,
-                        email: userData.user.email,
-                        name: (userData.user.user_metadata as any)?.full_name ?? userData.user.user_metadata?.name ?? null,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString(),
-                    }
-                    const { error: upsertErr } = await (svc as any).from('users').upsert(upsertPayload)
-                    if (upsertErr) {
-                        console.error('Failed to upsert users row via service client:', upsertErr)
-                        return NextResponse.json({ error: 'Database error', details: (upsertErr as any)?.message ?? upsertErr }, { status: 500 })
-                    }
-                } catch (e) {
-                    console.error('Error creating users row via service client:', e)
-                    return NextResponse.json({ error: 'Database error', details: String(e) }, { status: 500 })
+                const { error: insertUserErr } = await supa.from('users').insert({
+                    id: userData.user.id,
+                    email: userData.user.email,
+                    name: (userData.user.user_metadata as any)?.full_name ?? userData.user.user_metadata?.name ?? null,
+                })
+                if (insertUserErr) {
+                    console.error('Failed to insert users row:', insertUserErr)
+                    return NextResponse.json({ error: 'Database error', details: (insertUserErr as any)?.message ?? insertUserErr }, { status: 500 })
                 }
             }
         } catch (e) {
-            console.error('Error checking users row:', e)
+            console.error('Error checking/creating users row:', e)
             return NextResponse.json({ error: 'Database error', details: String(e) }, { status: 500 })
         }
 
@@ -246,16 +227,9 @@ export async function PUT(request: NextRequest) {
     }
 
     if (!updated || updated.length === 0) {
-        // If no rows were updated, it could be either: the want doesn't exist,
-        // or it exists but belongs to a different user (RLS prevented update).
-        // Try to detect which case using the service role client (no RLS).
+        // If no rows were updated, check if the want exists at all
         try {
-            if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-                // Can't check ownership without anon key; return generic 404
-                return NextResponse.json({ error: 'Want not found' }, { status: 404 });
-            }
-            const svc = await createClient()
-            const { data: existingWant } = await (svc as any)
+            const { data: existingWant } = await supa
                 .from('wants')
                 .select('id, user_id')
                 .eq('id', wantId)
@@ -263,22 +237,17 @@ export async function PUT(request: NextRequest) {
 
             if (existingWant) {
                 if (existingWant.user_id === userData.user.id) {
-                    // Log a warning and return a generic error.
                     console.warn('PUT update failed unexpectedly', { wantId, authUserId: userData.user.id })
                     return NextResponse.json({ error: 'Failed to update want' }, { status: 500 })
                 }
-                // The want exists but wasn't updated — likely a permission issue
                 console.warn('PUT denied: user mismatch', { wantId, authUserId: userData.user.id, ownerId: existingWant.user_id })
-                // Include the ids in the response to aid debugging during development.
                 return NextResponse.json(
-                    { error: 'Forbidden: cannot modify this want', userId: userData.user.id, ownerId: existingWant.user_id },
+                    { error: 'Forbidden: cannot modify this want' },
                     { status: 403 }
                 )
             }
-            
         } catch (e) {
-            console.error('Error checking want existence with service client:', e)
-            // fallthrough to generic 404
+            console.error('Error checking want existence:', e)
         }
 
         return NextResponse.json({ error: 'Want not found' }, { status: 404 });
