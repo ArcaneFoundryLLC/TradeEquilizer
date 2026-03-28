@@ -28,6 +28,11 @@ type DisplayCard = {
   set_name?: string
   collector_number: string
   image_uris?: { small?: string; normal?: string }
+  isFromCatalog?: boolean
+    price?: {
+    market: number
+    currency: string
+  }
 }
 
 export default function TradeSearchPage() {
@@ -40,6 +45,7 @@ export default function TradeSearchPage() {
   const [addingToInventory, setAddingToInventory] = useState<string | null>(null)
   const [addingToWants, setAddingToWants] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+   const [prices, setPrices] = useState<Record<string, { market: number; currency: string }>>({})
   const fetchAbortRef = useRef<AbortController | null>(null)
 
   // Placeholder mock results to visualize layout (Magic: The Gathering)
@@ -58,12 +64,13 @@ export default function TradeSearchPage() {
   const filteredCards: DisplayCard[] = useMemo(() => {
     // When real data is present, filter that; else show mock cards as placeholder
     const base: DisplayCard[] = results.length > 0
-      ? results.map<DisplayCard>((c) => c)
+      ? results.map<DisplayCard>((c) => ({ ...c, isFromCatalog: true, price: prices[c.id] }))
       : allCards.map<DisplayCard>((c) => ({
           id: c.id,
           name: c.name,
           set: c.set,
           collector_number: c.number,
+          isFromCatalog: false,
         }))
 
     return base.filter((card) => {
@@ -125,6 +132,35 @@ export default function TradeSearchPage() {
 
     return () => clearTimeout(handle)
   }, [query])
+
+    // Fetch prices for catalog cards
+  useEffect(() => {
+    const catalogCards = filteredCards.filter(card => card.isFromCatalog)
+    if (catalogCards.length === 0) return
+
+    const fetchPrices = async () => {
+      const newPrices: Record<string, { market: number; currency: string }> = {}
+
+      for (const card of catalogCards) {
+        try {
+          const response = await fetch(`/api/prices/market?itemId=${card.id}`)
+          if (response.ok) {
+            const priceData = await response.json()
+            newPrices[card.id] = {
+              market: priceData.market,
+              currency: priceData.currency
+            }
+          }
+        } catch (error) {
+          console.warn(`Failed to fetch price for ${card.name}:`, error)
+        }
+      }
+
+      setPrices(prev => ({ ...prev, ...newPrices }))
+    }
+
+    fetchPrices()
+  }, [filteredCards])
 
   const handleAddToInventory = async (card: DisplayCard) => {
     if (!user) {
@@ -310,6 +346,16 @@ export default function TradeSearchPage() {
                 </div>
                 <div className="text-base font-medium">{card.name}</div>
               </div>
+                              {card.price && (
+                  <div className="text-sm font-semibold text-green-600 mt-1">
+                    ${card.price.market.toFixed(2)} {card.price.currency}
+                  </div>
+                )}
+                {!card.isFromCatalog && (
+                  <div className="text-xs text-gray-400 mt-1">
+                    Price not available
+                  </div>
+                )}
 
               <div className="flex items-center gap-2">
                 <Button
