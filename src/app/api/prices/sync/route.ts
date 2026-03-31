@@ -124,7 +124,7 @@ async function fetchScryfallPriceForInsert(item: ItemRow, version: string) {
 
 export async function POST() {
   try {
-    const supabase = await createClient()
+    const supabase = await createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_SERVICE_ROLE_KEY)
 
     // Get items to sync. Previously this required tcgplayer_id which left many
     // items unsynced (items created via Scryfall may lack tcgplayer ids). To
