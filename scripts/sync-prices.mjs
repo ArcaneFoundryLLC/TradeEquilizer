@@ -19,12 +19,12 @@
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-if (!supabaseUrl || !supabaseKey) {
+if (!supabaseUrl || !supabaseKey || supabaseKey === 'your_supabase_service_role_key_here') {
   console.error('Missing required environment variables:')
   console.error('- NEXT_PUBLIC_SUPABASE_URL')
-  console.error('- NEXT_PUBLIC_SUPABASE_ANON_KEY')
+  console.error('- SUPABASE_SERVICE_ROLE_KEY (must be the real service role key, not the placeholder)')
   process.exit(1)
 }
 

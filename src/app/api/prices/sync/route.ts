@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 
 // Server-side price sync endpoint
 const BATCH_SIZE = parseInt(process.env.PRICE_SYNC_BATCH_SIZE || '500')
@@ -124,7 +125,13 @@ async function fetchScryfallPriceForInsert(item: ItemRow, version: string) {
 
 export async function POST() {
   try {
-    const supabase = await createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_SERVICE_ROLE_KEY)
+    const supabase = createServiceClient()
+    if (!supabase) {
+      return NextResponse.json(
+        { error: 'Service role key not configured. Set SUPABASE_SERVICE_ROLE_KEY in .env.local' },
+        { status: 500 }
+      )
+    }
 
     // Get items to sync. Previously this required tcgplayer_id which left many
     // items unsynced (items created via Scryfall may lack tcgplayer ids). To
