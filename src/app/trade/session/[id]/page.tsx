@@ -1,10 +1,56 @@
 'use client'
 
-import { useState, useEffect, use } from 'react'
+import { useState, useEffect, use, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import QRCode from 'qrcode'
 import { TradeSession, TradeProposal, TradeItem } from '@/types'
 
+// ── Scryfall card shape (subset we care about) ──
+interface ScryfallCard {
+  id: string
+  name: string
+  set_name: string
+  set: string
+  collector_number: string
+  image_uris?: { small: string; normal: string }
+  card_faces?: { image_uris?: { small: string; normal: string } }[]
+  prices?: { usd?: string; usd_foil?: string }
+}
+
+// ── Local item added to a trade side ──
+interface TradeLineItem {
+  scryfallId: string
+  localItemId?: string // resolved DB id
+  name: string
+  set: string
+  imageUrl: string
+  quantity: number
+  condition: 'NM' | 'LP' | 'MP' | 'HP'
+  finish: 'normal' | 'foil'
+  price: number // unit price
+}
+
+const CONDITIONS: TradeLineItem['condition'][] = ['NM', 'LP', 'MP', 'HP']
+const CONDITION_MULT: Record<string, number> = { NM: 1, LP: 0.9, MP: 0.75, HP: 0.5 }
+const FINISH_MULT: Record<string, number> = { normal: 1, foil: 1.5 }
+
+function cardImage(c: ScryfallCard): string {
+  return c.image_uris?.small ?? c.card_faces?.[0]?.image_uris?.small ?? ''
+}
+function cardPrice(c: ScryfallCard, finish: 'normal' | 'foil'): number {
+  const raw = finish === 'foil' ? c.prices?.usd_foil : c.prices?.usd
+  return raw ? parseFloat(raw) : 0
+}
+function lineTotal(item: TradeLineItem): number {
+  return Math.round(item.price * CONDITION_MULT[item.condition] * FINISH_MULT[item.finish] * item.quantity * 100) / 100
+}
+function sideTotal(items: TradeLineItem[]): number {
+  return Math.round(items.reduce((s, i) => s + lineTotal(i), 0) * 100) / 100
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Main page
+// ────────────────────────────────────────────────────────────────────────────
 export default function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params)
   const router = useRouter()
@@ -12,145 +58,169 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [isCreator, setIsCreator] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('')
-  const [timeRemaining, setTimeRemaining] = useState<string>('')
-  
-  // Proposal state
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState('')
+  const [timeRemaining, setTimeRemaining] = useState('')
+
+  // Proposals
   const [proposals, setProposals] = useState<TradeProposal[]>([])
-  const [showCreateProposal, setShowCreateProposal] = useState(false)
   const [proposalLoading, setProposalLoading] = useState(false)
 
-  useEffect(() => {
-    fetchSession()
-    fetchProposals()
-    const interval = setInterval(() => {
-      fetchSession()
-      fetchProposals()
-    }, 5000) // Poll every 5 seconds
-    return () => clearInterval(interval)
-  }, [resolvedParams.id])
+  // Trade builder
+  const [showBuilder, setShowBuilder] = useState(false)
+  const [myItems, setMyItems] = useState<TradeLineItem[]>([])
+  const [theirItems, setTheirItems] = useState<TradeLineItem[]>([])
+  const [proposalMessage, setProposalMessage] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  useEffect(() => {
-    if (session) {
-      // Generate QR code
-      const qrData = `${window.location.origin}/trade?join=${session.qrCode}`
-      QRCode.toDataURL(qrData, {
-        width: 300,
-        margin: 2,
-        color: {
-          dark: '#000000',
-          light: '#FFFFFF'
-        }
-      }).then(setQrCodeDataUrl)
-
-      // Update time remaining
-      const updateTimer = () => {
-        const now = new Date().getTime()
-        const expires = new Date(session.expiresAt).getTime()
-        const diff = expires - now
-
-        if (diff <= 0) {
-          setTimeRemaining('Expired')
-        } else {
-          const minutes = Math.floor(diff / 60000)
-          const seconds = Math.floor((diff % 60000) / 1000)
-          setTimeRemaining(`${minutes}:${seconds.toString().padStart(2, '0')}`)
-        }
-      }
-
-      updateTimer()
-      const timer = setInterval(updateTimer, 1000)
-      return () => clearInterval(timer)
-    }
-  }, [session])
-
-  const fetchSession = async () => {
+  // ── data fetching ──
+  const fetchSession = useCallback(async () => {
     try {
-      const response = await fetch(`/api/trades/session/${resolvedParams.id}`)
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.message || errorData.error || 'Failed to fetch session')
+      const res = await fetch(`/api/trades/session/${resolvedParams.id}`)
+      if (!res.ok) {
+        const d = await res.json()
+        throw new Error(d.message || d.error || 'Failed to fetch session')
       }
-
-      const data = await response.json()
-      setSession(data.session)
-      setIsCreator(data.isCreator)
+      const d = await res.json()
+      setSession(d.session)
+      setIsCreator(d.isCreator)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
       setLoading(false)
     }
-  }
+  }, [resolvedParams.id])
 
-  const fetchProposals = async () => {
+  const fetchProposals = useCallback(async () => {
     try {
-      const response = await fetch(`/api/trades/proposals?sessionId=${resolvedParams.id}`)
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success) {
-          setProposals(data.proposals || [])
-        }
+      const res = await fetch(`/api/trades/proposals?sessionId=${resolvedParams.id}`)
+      if (res.ok) {
+        const d = await res.json()
+        if (d.success) setProposals(d.proposals || [])
       }
-    } catch (err) {
-      console.error('Error fetching proposals:', err)
-    }
-  }
+    } catch {}
+  }, [resolvedParams.id])
 
+  useEffect(() => {
+    fetchSession()
+    fetchProposals()
+    const iv = setInterval(() => { fetchSession(); fetchProposals() }, 5000)
+    return () => clearInterval(iv)
+  }, [fetchSession, fetchProposals])
+
+  // QR + timer
+  useEffect(() => {
+    if (!session) return
+    const qrData = `${window.location.origin}/trade?join=${session.qrCode}`
+    QRCode.toDataURL(qrData, { width: 300, margin: 2 }).then(setQrCodeDataUrl)
+
+    const tick = () => {
+      const diff = new Date(session.expiresAt).getTime() - Date.now()
+      if (diff <= 0) { setTimeRemaining('Expired'); return }
+      const m = Math.floor(diff / 60000)
+      const s = Math.floor((diff % 60000) / 1000)
+      setTimeRemaining(`${m}:${s.toString().padStart(2, '0')}`)
+    }
+    tick()
+    const t = setInterval(tick, 1000)
+    return () => clearInterval(t)
+  }, [session])
+
+  // ── actions ──
   const cancelSession = async () => {
-    if (!confirm('Are you sure you want to cancel this session?')) {
-      return
-    }
-
+    if (!confirm('Cancel this session?')) return
     try {
-      const response = await fetch(`/api/trades/session/${resolvedParams.id}`, {
-        method: 'DELETE'
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.message || errorData.error || 'Failed to cancel session')
-      }
-
+      const res = await fetch(`/api/trades/session/${resolvedParams.id}`, { method: 'DELETE' })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error) }
       router.push('/trade')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Error') }
   }
 
-  const respondToProposal = async (proposalId: string, action: 'accept' | 'reject', rejectionReason?: string) => {
+  const respondToProposal = async (id: string, action: 'accept' | 'reject', reason?: string) => {
     setProposalLoading(true)
     try {
-      const response = await fetch(`/api/trades/proposals/${proposalId}`, {
+      const res = await fetch(`/api/trades/proposals/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, rejectionReason })
+        body: JSON.stringify({ action, rejectionReason: reason }),
       })
+      const d = await res.json()
+      if (d.success) { fetchProposals(); fetchSession() }
+      else alert(d.error || 'Failed')
+    } catch { alert('Error responding') }
+    finally { setProposalLoading(false) }
+  }
 
-      const data = await response.json()
-      if (data.success) {
-        await fetchProposals()
-        await fetchSession()
-        if (action === 'accept') {
-          alert('Trade accepted! The session is now complete.')
+  // ── submit proposal ──
+  const submitProposal = async () => {
+    if (myItems.length === 0 && theirItems.length === 0) {
+      alert('Add at least one card to either side')
+      return
+    }
+    setSubmitting(true)
+    try {
+      // Resolve scryfall IDs → local item IDs
+      const resolve = async (items: TradeLineItem[]) => {
+        const out: TradeItem[] = []
+        for (const li of items) {
+          let itemId = li.localItemId
+          if (!itemId) {
+            const r = await fetch(`/api/items/resolve?id=${encodeURIComponent(li.scryfallId)}`)
+            const d = await r.json()
+            itemId = d.id
+          }
+          if (!itemId) throw new Error(`Could not resolve card: ${li.name}`)
+          out.push({
+            itemId,
+            quantity: li.quantity,
+            condition: li.condition,
+            finish: li.finish,
+            language: 'en',
+            name: li.name,
+            set: li.set,
+            currentPrice: lineTotal(li),
+          })
         }
+        return out
+      }
+
+      const proposerItems = await resolve(myItems)
+      const recipientItems = await resolve(theirItems)
+
+      const res = await fetch('/api/trades/proposals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: resolvedParams.id,
+          proposerItems,
+          recipientItems,
+          message: proposalMessage || undefined,
+        }),
+      })
+      const d = await res.json()
+      if (d.success) {
+        setShowBuilder(false)
+        setMyItems([])
+        setTheirItems([])
+        setProposalMessage('')
+        fetchProposals()
       } else {
-        alert(data.error || 'Failed to respond to proposal')
+        alert(d.error || 'Failed to create proposal')
       }
     } catch (err) {
-      alert('Error responding to proposal')
+      alert(err instanceof Error ? err.message : 'Error submitting proposal')
     } finally {
-      setProposalLoading(false)
+      setSubmitting(false)
     }
   }
 
+  // ── render helpers ──
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading session...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4" />
+          <p className="text-gray-600">Loading session…</p>
         </div>
       </div>
     )
@@ -164,10 +234,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             <div className="p-4 bg-red-50 border border-red-200 rounded-md mb-4">
               <p className="text-red-800">{error || 'Session not found'}</p>
             </div>
-            <button
-              onClick={() => router.push('/trade')}
-              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-            >
+            <button onClick={() => router.push('/trade')} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
               Back to Trade
             </button>
           </div>
@@ -180,396 +247,421 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const isWaiting = session.status === 'waiting'
   const isConnected = session.status === 'connected'
   const isCompleted = session.status === 'completed'
-
   const pendingProposals = proposals.filter(p => p.status === 'pending')
   const completedProposals = proposals.filter(p => p.status !== 'pending')
+  const myTotal = sideTotal(myItems)
+  const theirTotal = sideTotal(theirItems)
+  const diff = Math.round((theirTotal - myTotal) * 100) / 100
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
+    <div className="min-h-screen bg-gray-50 py-6">
       <div className="max-w-6xl mx-auto px-4">
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex justify-between items-start mb-6">
+        {/* Header */}
+        <div className="bg-white rounded-lg shadow-md p-5 mb-4">
+          <div className="flex justify-between items-start">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                Trade Session
-              </h1>
-              <div className="flex items-center gap-4">
-                <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+              <h1 className="text-2xl font-bold text-gray-900 mb-1">Trade Session</h1>
+              <div className="flex items-center gap-3">
+                <span className={`px-3 py-1 rounded-full text-xs font-medium ${
                   session.status === 'waiting' ? 'bg-yellow-100 text-yellow-800' :
                   session.status === 'connected' ? 'bg-green-100 text-green-800' :
-                  session.status === 'proposing' ? 'bg-blue-100 text-blue-800' :
                   session.status === 'completed' ? 'bg-gray-100 text-gray-800' :
                   'bg-red-100 text-red-800'
                 }`}>
                   {session.status.charAt(0).toUpperCase() + session.status.slice(1)}
                 </span>
                 {isWaiting && !isExpired && (
-                  <span className="text-sm text-gray-600">
-                    Expires in: <span className="font-mono font-semibold">{timeRemaining}</span>
-                  </span>
+                  <span className="text-sm text-gray-500">Expires in <span className="font-mono font-semibold">{timeRemaining}</span></span>
                 )}
               </div>
             </div>
-            {isCreator && isWaiting && (
-              <button
-                onClick={cancelSession}
-                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
-              >
-                Cancel Session
-              </button>
-            )}
-          </div>
-
-          {isExpired && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md">
-              <p className="text-red-800 font-medium">This session has expired.</p>
-              <p className="text-red-700 text-sm mt-1">Please create a new session to continue trading.</p>
-            </div>
-          )}
-
-          <div className="grid lg:grid-cols-2 gap-6">
-            {/* QR Code Section */}
-            {isCreator && isWaiting && !isExpired && (
-              <div className="border border-gray-200 rounded-lg p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                  Share this QR Code
-                </h2>
-                {qrCodeDataUrl && (
-                  <div className="flex flex-col items-center">
-                    <img 
-                      src={qrCodeDataUrl} 
-                      alt="Session QR Code" 
-                      className="w-64 h-64 border-4 border-gray-200 rounded-lg"
-                    />
-                    <div className="mt-4 p-3 bg-gray-50 rounded-md w-full">
-                      <p className="text-xs text-gray-600 mb-1">Or share this code:</p>
-                      <p className="font-mono text-lg font-bold text-center text-gray-900">
-                        {session.qrCode}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Session Info */}
-            <div className="border border-gray-200 rounded-lg p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                Session Details
-              </h2>
-              <dl className="space-y-3">
-                <div>
-                  <dt className="text-sm font-medium text-gray-600">Game</dt>
-                  <dd className="text-sm text-gray-900 mt-1">Magic: The Gathering</dd>
-                </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-600">Price Source</dt>
-                  <dd className="text-sm text-gray-900 mt-1">TCGplayer Market</dd>
-                </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-600">Fairness Threshold</dt>
-                  <dd className="text-sm text-gray-900 mt-1">±{session.fairnessThreshold}%</dd>
-                </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-600">Currency</dt>
-                  <dd className="text-sm text-gray-900 mt-1">USD</dd>
-                </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-600">Created</dt>
-                  <dd className="text-sm text-gray-900 mt-1">
-                    {new Date(session.createdAt).toLocaleString()}
-                  </dd>
-                </div>
-              </dl>
-            </div>
-          </div>
-
-          {/* Status Messages */}
-          {isWaiting && !isExpired && (
-            <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
-              <p className="text-blue-900 font-medium">
-                {isCreator ? 'Waiting for another player to join...' : 'Waiting for session to start...'}
-              </p>
-              <p className="text-blue-800 text-sm mt-1">
-                The session will automatically connect when both players are ready.
-              </p>
-            </div>
-          )}
-
-          {isConnected && (
-            <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-md">
-              <p className="text-green-900 font-medium">
-                ✓ Connected! Both players are in the session.
-              </p>
-              <p className="text-green-800 text-sm mt-1">
-                You can now start proposing trades.
-              </p>
-            </div>
-          )}
-
-          {isCompleted && (
-            <div className="mt-6 p-4 bg-gray-50 border border-gray-200 rounded-md">
-              <p className="text-gray-900 font-medium">
-                ✓ Trade completed successfully!
-              </p>
-              <p className="text-gray-700 text-sm mt-1">
-                This session has been completed. Check your trade history for details.
-              </p>
-            </div>
-          )}
-
-          {/* Trade Proposals Section */}
-          {(isConnected || isCompleted) && (
-            <div className="mt-8">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-semibold text-gray-900">Trade Proposals</h2>
-                {isConnected && !showCreateProposal && (
-                  <button
-                    onClick={() => setShowCreateProposal(true)}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                  >
-                    Create Proposal
-                  </button>
-                )}
-              </div>
-
-              {/* Create Proposal Form */}
-              {showCreateProposal && (
-                <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-medium text-blue-900">Create New Proposal</h3>
-                    <button
-                      onClick={() => setShowCreateProposal(false)}
-                      className="text-blue-600 hover:text-blue-800"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <p className="text-blue-800 text-sm mb-4">
-                    Proposal creation UI coming soon! This will include:
-                  </p>
-                  <ul className="text-blue-800 text-sm space-y-1 ml-4">
-                    <li>• Card search and selection</li>
-                    <li>• Inventory browsing</li>
-                    <li>• Real-time value calculation</li>
-                    <li>• Fairness validation</li>
-                  </ul>
-                </div>
+            <div className="flex gap-2">
+              {isCreator && isWaiting && (
+                <button onClick={cancelSession} className="px-3 py-1.5 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm">Cancel</button>
               )}
-
-              {/* Pending Proposals */}
-              {pendingProposals.length > 0 && (
-                <div className="mb-6">
-                  <h3 className="text-lg font-medium text-gray-900 mb-3">Pending Proposals</h3>
-                  <div className="space-y-4">
-                    {pendingProposals.map((proposal) => (
-                      <ProposalCard 
-                        key={proposal.id} 
-                        proposal={proposal} 
-                        onRespond={respondToProposal}
-                        loading={proposalLoading}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Completed Proposals */}
-              {completedProposals.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-3">Proposal History</h3>
-                  <div className="space-y-4">
-                    {completedProposals.map((proposal) => (
-                      <ProposalCard 
-                        key={proposal.id} 
-                        proposal={proposal} 
-                        onRespond={respondToProposal}
-                        loading={false}
-                        readonly
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {proposals.length === 0 && (
-                <div className="text-center py-8 text-gray-500">
-                  No proposals yet. Create the first proposal to start trading!
-                </div>
-              )}
+              <button onClick={() => router.push('/trade')} className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Back</button>
             </div>
-          )}
-
-          <div className="mt-6 flex gap-4">
-            <button
-              onClick={() => router.push('/trade')}
-              className="px-6 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
-            >
-              Back to Trade
-            </button>
           </div>
         </div>
+
+        {/* Waiting / QR */}
+        {isWaiting && !isExpired && isCreator && (
+          <div className="bg-white rounded-lg shadow-md p-6 mb-4 text-center">
+            <h2 className="text-lg font-semibold mb-3">Share this code to start trading</h2>
+            {qrCodeDataUrl && <img src={qrCodeDataUrl} alt="QR" className="w-56 h-56 mx-auto border-4 border-gray-200 rounded-lg" />}
+            <div className="mt-3 inline-block px-4 py-2 bg-gray-100 rounded-md font-mono text-xl tracking-widest">{session.qrCode}</div>
+            <p className="text-gray-500 text-sm mt-2">The other player enters this code on the Trade page</p>
+          </div>
+        )}
+
+        {isWaiting && !isCreator && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4 text-blue-900">
+            Waiting for the session creator to be ready…
+          </div>
+        )}
+
+        {isExpired && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 text-red-800">
+            This session has expired. <button onClick={() => router.push('/trade')} className="underline">Create a new one</button>.
+          </div>
+        )}
+
+        {isConnected && !showBuilder && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4 flex justify-between items-center">
+            <span className="text-green-900 font-medium">✓ Connected — both players are in the session</span>
+            <button onClick={() => setShowBuilder(true)} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium">
+              Build a Trade
+            </button>
+          </div>
+        )}
+
+        {isCompleted && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4 text-gray-800">
+            ✓ Trade completed.
+          </div>
+        )}
+
+        {/* ── Trade Builder ── */}
+        {showBuilder && isConnected && (
+          <div className="bg-white rounded-lg shadow-md p-5 mb-4">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-bold text-gray-900">Trade Builder</h2>
+              <button onClick={() => setShowBuilder(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* My side */}
+              <TradeSide
+                label="You're giving"
+                items={myItems}
+                setItems={setMyItems}
+                total={myTotal}
+                accentColor="blue"
+              />
+              {/* Their side */}
+              <TradeSide
+                label="You're getting"
+                items={theirItems}
+                setItems={setTheirItems}
+                total={theirTotal}
+                accentColor="green"
+              />
+            </div>
+
+            {/* Summary bar */}
+            <div className="mt-5 p-4 rounded-lg bg-gray-50 border border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-3">
+              <div className="flex gap-6 text-sm">
+                <span>Giving: <span className="font-semibold">${myTotal.toFixed(2)}</span></span>
+                <span>Getting: <span className="font-semibold">${theirTotal.toFixed(2)}</span></span>
+                <span className={`font-semibold ${Math.abs(diff) < 1 ? 'text-green-600' : diff > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {diff >= 0 ? '+' : ''}{diff.toFixed(2)} in your favor
+                </span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  placeholder="Optional message…"
+                  value={proposalMessage}
+                  onChange={e => setProposalMessage(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-300 rounded-md text-sm w-48"
+                />
+                <button
+                  onClick={submitProposal}
+                  disabled={submitting || (myItems.length === 0 && theirItems.length === 0)}
+                  className="px-5 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+                >
+                  {submitting ? 'Sending…' : 'Send Proposal'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Proposals list ── */}
+        {(isConnected || isCompleted) && proposals.length > 0 && (
+          <div className="bg-white rounded-lg shadow-md p-5">
+            <h2 className="text-lg font-bold text-gray-900 mb-4">Proposals</h2>
+
+            {pendingProposals.length > 0 && (
+              <div className="mb-4 space-y-3">
+                {pendingProposals.map(p => (
+                  <ProposalCard key={p.id} proposal={p} onRespond={respondToProposal} loading={proposalLoading} />
+                ))}
+              </div>
+            )}
+
+            {completedProposals.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">History</h3>
+                {completedProposals.map(p => (
+                  <ProposalCard key={p.id} proposal={p} onRespond={respondToProposal} loading={false} readonly />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {(isConnected || isCompleted) && proposals.length === 0 && !showBuilder && (
+          <div className="text-center py-10 text-gray-400">No proposals yet</div>
+        )}
       </div>
     </div>
   )
 }
 
-// Proposal Card Component
-function ProposalCard({ 
-  proposal, 
-  onRespond, 
-  loading, 
-  readonly = false 
-}: { 
+// ────────────────────────────────────────────────────────────────────────────
+// Trade Side — search + item list for one side of the trade
+// ────────────────────────────────────────────────────────────────────────────
+function TradeSide({
+  label, items, setItems, total, accentColor,
+}: {
+  label: string
+  items: TradeLineItem[]
+  setItems: React.Dispatch<React.SetStateAction<TradeLineItem[]>>
+  total: number
+  accentColor: 'blue' | 'green'
+}) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<ScryfallCard[]>([])
+  const [searching, setSearching] = useState(false)
+  const debounceRef = useState<ReturnType<typeof setTimeout> | null>(null)
+
+  const search = (q: string) => {
+    setQuery(q)
+    if (debounceRef[0]) clearTimeout(debounceRef[0])
+    if (q.trim().length < 2) { setResults([]); return }
+    debounceRef[0] = setTimeout(async () => {
+      setSearching(true)
+      try {
+        const res = await fetch(`/api/scryfall?q=${encodeURIComponent(q)}&unique=cards`)
+        const d = await res.json()
+        setResults((d.data || []).slice(0, 8))
+      } catch { setResults([]) }
+      finally { setSearching(false) }
+    }, 350)
+  }
+
+  const addCard = (card: ScryfallCard) => {
+    const hasFoil = !!card.prices?.usd_foil
+    const finish: 'normal' | 'foil' = (!card.prices?.usd && hasFoil) ? 'foil' : 'normal'
+    const price = cardPrice(card, finish)
+    setItems(prev => [
+      ...prev,
+      {
+        scryfallId: card.id,
+        name: card.name,
+        set: card.set_name,
+        imageUrl: cardImage(card),
+        quantity: 1,
+        condition: 'NM',
+        finish,
+        price,
+      },
+    ])
+    setQuery('')
+    setResults([])
+  }
+
+  const removeCard = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx))
+
+  const updateCard = (idx: number, patch: Partial<TradeLineItem>) =>
+    setItems(prev => prev.map((item, i) => i === idx ? { ...item, ...patch } : item))
+
+  const borderColor = accentColor === 'blue' ? 'border-blue-300' : 'border-green-300'
+  const bgColor = accentColor === 'blue' ? 'bg-blue-50' : 'bg-green-50'
+
+  return (
+    <div className={`border-2 ${borderColor} rounded-lg p-4`}>
+      <div className="flex justify-between items-center mb-3">
+        <h3 className="font-semibold text-gray-900">{label}</h3>
+        <span className="text-sm font-mono font-semibold">${total.toFixed(2)}</span>
+      </div>
+
+      {/* Search */}
+      <div className="relative mb-3">
+        <input
+          type="text"
+          value={query}
+          onChange={e => search(e.target.value)}
+          placeholder="Search cards…"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+        />
+        {searching && <div className="absolute right-3 top-2.5 text-xs text-gray-400">searching…</div>}
+
+        {/* Dropdown results */}
+        {results.length > 0 && (
+          <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-72 overflow-y-auto">
+            {results.map(card => (
+              <button
+                key={card.id}
+                onClick={() => addCard(card)}
+                className="w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-50 text-left"
+              >
+                {cardImage(card) && (
+                  <img src={cardImage(card)} alt="" className="w-10 h-14 rounded object-cover flex-shrink-0" />
+                )}
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-gray-900 truncate">{card.name}</div>
+                  <div className="text-xs text-gray-500">{card.set_name} · {card.collector_number}</div>
+                  <div className="text-xs text-gray-600 font-mono">
+                    {card.prices?.usd ? `$${card.prices.usd}` : ''}
+                    {card.prices?.usd_foil ? ` / Foil $${card.prices.usd_foil}` : ''}
+                    {!card.prices?.usd && !card.prices?.usd_foil ? 'No price' : ''}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Item list */}
+      {items.length === 0 && (
+        <div className={`text-center py-6 ${bgColor} rounded-md text-sm text-gray-500`}>
+          Search and add cards above
+        </div>
+      )}
+
+      <div className="space-y-2 max-h-80 overflow-y-auto">
+        {items.map((item, idx) => (
+          <div key={idx} className="flex items-start gap-2 p-2 bg-gray-50 rounded-md">
+            {item.imageUrl && <img src={item.imageUrl} alt="" className="w-10 h-14 rounded object-cover flex-shrink-0" />}
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-gray-900 truncate">{item.name}</div>
+              <div className="text-xs text-gray-500 truncate">{item.set}</div>
+              <div className="flex gap-2 mt-1 flex-wrap">
+                <select
+                  value={item.condition}
+                  onChange={e => updateCard(idx, { condition: e.target.value as TradeLineItem['condition'] })}
+                  className="text-xs border border-gray-300 rounded px-1 py-0.5"
+                  aria-label="Condition"
+                >
+                  {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select
+                  value={item.finish}
+                  onChange={e => updateCard(idx, { finish: e.target.value as 'normal' | 'foil' })}
+                  className="text-xs border border-gray-300 rounded px-1 py-0.5"
+                  aria-label="Finish"
+                >
+                  <option value="normal">Normal</option>
+                  <option value="foil">Foil</option>
+                </select>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={item.quantity}
+                  onChange={e => updateCard(idx, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
+                  className="text-xs border border-gray-300 rounded px-1 py-0.5 w-12 text-center"
+                  aria-label="Quantity"
+                />
+              </div>
+            </div>
+            <div className="text-right flex-shrink-0">
+              <div className="text-sm font-mono font-semibold">${lineTotal(item).toFixed(2)}</div>
+              <button onClick={() => removeCard(idx)} className="text-red-400 hover:text-red-600 text-xs mt-1" aria-label="Remove card">✕ remove</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Proposal Card
+// ────────────────────────────────────────────────────────────────────────────
+function ProposalCard({
+  proposal, onRespond, loading, readonly = false,
+}: {
   proposal: TradeProposal
   onRespond: (id: string, action: 'accept' | 'reject', reason?: string) => void
   loading: boolean
   readonly?: boolean
 }) {
-  const [showRejectReason, setShowRejectReason] = useState(false)
-  const [rejectionReason, setRejectionReason] = useState('')
-
+  const [showReject, setShowReject] = useState(false)
+  const [reason, setReason] = useState('')
   const isExpired = new Date(proposal.expiresAt) < new Date()
   const canRespond = proposal.status === 'pending' && !isExpired && !readonly
 
-  const handleReject = () => {
-    if (showRejectReason) {
-      onRespond(proposal.id, 'reject', rejectionReason)
-      setShowRejectReason(false)
-      setRejectionReason('')
-    } else {
-      setShowRejectReason(true)
-    }
-  }
-
   return (
     <div className="border border-gray-200 rounded-lg p-4">
-      <div className="flex justify-between items-start mb-4">
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className={`px-2 py-1 rounded text-xs font-medium ${
-              proposal.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-              proposal.status === 'accepted' ? 'bg-green-100 text-green-800' :
-              proposal.status === 'rejected' ? 'bg-red-100 text-red-800' :
-              'bg-gray-100 text-gray-800'
-            }`}>
-              {proposal.status.charAt(0).toUpperCase() + proposal.status.slice(1)}
-            </span>
-            {isExpired && proposal.status === 'pending' && (
-              <span className="px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
-                Expired
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-gray-600">
-            Created: {new Date(proposal.createdAt).toLocaleString()}
-          </p>
-          {proposal.expiresAt && proposal.status === 'pending' && (
-            <p className="text-sm text-gray-600">
-              Expires: {new Date(proposal.expiresAt).toLocaleString()}
-            </p>
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex items-center gap-2">
+          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+            proposal.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+            proposal.status === 'accepted' ? 'bg-green-100 text-green-800' :
+            proposal.status === 'rejected' ? 'bg-red-100 text-red-800' :
+            'bg-gray-100 text-gray-800'
+          }`}>
+            {proposal.status.charAt(0).toUpperCase() + proposal.status.slice(1)}
+          </span>
+          {isExpired && proposal.status === 'pending' && (
+            <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Expired</span>
           )}
         </div>
-        <div className="text-right">
-          <div className="text-sm text-gray-600">Fairness</div>
-          <div className={`text-lg font-semibold ${
-            Math.abs(proposal.fairnessPercentage) <= 5 ? 'text-green-600' :
-            Math.abs(proposal.fairnessPercentage) <= 10 ? 'text-yellow-600' :
-            'text-red-600'
-          }`}>
-            {proposal.fairnessPercentage > 0 ? '+' : ''}{proposal.fairnessPercentage}%
-          </div>
+        <div className={`text-lg font-semibold ${
+          Math.abs(proposal.fairnessPercentage) <= 5 ? 'text-green-600' :
+          Math.abs(proposal.fairnessPercentage) <= 10 ? 'text-yellow-600' : 'text-red-600'
+        }`}>
+          {proposal.fairnessPercentage > 0 ? '+' : ''}{proposal.fairnessPercentage}%
         </div>
       </div>
 
       {proposal.message && (
-        <div className="mb-4 p-3 bg-gray-50 rounded-md">
-          <p className="text-sm text-gray-700">{proposal.message}</p>
-        </div>
+        <div className="mb-3 p-2 bg-gray-50 rounded text-sm text-gray-700">{proposal.message}</div>
       )}
 
-      <div className="grid md:grid-cols-2 gap-4 mb-4">
+      <div className="grid md:grid-cols-2 gap-4 mb-3">
         <div>
-          <h4 className="font-medium text-gray-900 mb-2">
-            Proposer Items (${proposal.proposerTotalValue.toFixed(2)})
-          </h4>
-          {proposal.proposerItems.length > 0 ? (
-            <div className="space-y-1">
-              {proposal.proposerItems.map((item, index) => (
-                <div key={index} className="text-sm text-gray-600">
-                  {item.quantity}x {item.name || `Item ${item.itemId}`} ({item.condition}, {item.finish})
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-500 italic">No items</p>
-          )}
+          <h4 className="text-xs font-medium text-gray-500 uppercase mb-1">Giving (${proposal.proposerTotalValue.toFixed(2)})</h4>
+          {proposal.proposerItems.length > 0 ? proposal.proposerItems.map((item, i) => (
+            <div key={i} className="text-sm text-gray-700">{item.quantity}x {item.name || item.itemId} <span className="text-gray-400">({item.condition}, {item.finish})</span></div>
+          )) : <p className="text-sm text-gray-400 italic">None</p>}
         </div>
         <div>
-          <h4 className="font-medium text-gray-900 mb-2">
-            Recipient Items (${proposal.recipientTotalValue.toFixed(2)})
-          </h4>
-          {proposal.recipientItems.length > 0 ? (
-            <div className="space-y-1">
-              {proposal.recipientItems.map((item, index) => (
-                <div key={index} className="text-sm text-gray-600">
-                  {item.quantity}x {item.name || `Item ${item.itemId}`} ({item.condition}, {item.finish})
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-500 italic">No items</p>
-          )}
+          <h4 className="text-xs font-medium text-gray-500 uppercase mb-1">Getting (${proposal.recipientTotalValue.toFixed(2)})</h4>
+          {proposal.recipientItems.length > 0 ? proposal.recipientItems.map((item, i) => (
+            <div key={i} className="text-sm text-gray-700">{item.quantity}x {item.name || item.itemId} <span className="text-gray-400">({item.condition}, {item.finish})</span></div>
+          )) : <p className="text-sm text-gray-400 italic">None</p>}
         </div>
       </div>
 
       {proposal.rejectionReason && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
-          <p className="text-sm text-red-800">
-            <strong>Rejection reason:</strong> {proposal.rejectionReason}
-          </p>
+        <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-800">
+          Rejection reason: {proposal.rejectionReason}
         </div>
       )}
 
-      {showRejectReason && (
-        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Rejection Reason (optional)
-          </label>
+      {showReject && (
+        <div className="mb-3">
           <textarea
-            value={rejectionReason}
-            onChange={(e) => setRejectionReason(e.target.value)}
+            value={reason}
+            onChange={e => setReason(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-            rows={3}
-            placeholder="Why are you rejecting this proposal?"
+            rows={2}
+            placeholder="Reason (optional)"
           />
         </div>
       )}
 
       {canRespond && (
         <div className="flex gap-2">
-          <button
-            onClick={() => onRespond(proposal.id, 'accept')}
-            disabled={loading}
-            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm"
-          >
-            {loading ? 'Processing...' : 'Accept'}
+          <button onClick={() => onRespond(proposal.id, 'accept')} disabled={loading}
+            className="px-4 py-1.5 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm">
+            Accept
           </button>
-          <button
-            onClick={handleReject}
-            disabled={loading}
-            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm"
-          >
-            {showRejectReason ? 'Confirm Reject' : 'Reject'}
+          <button onClick={() => {
+            if (showReject) { onRespond(proposal.id, 'reject', reason); setShowReject(false); setReason('') }
+            else setShowReject(true)
+          }} disabled={loading}
+            className="px-4 py-1.5 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm">
+            {showReject ? 'Confirm Reject' : 'Reject'}
           </button>
-          {showRejectReason && (
-            <button
-              onClick={() => {
-                setShowRejectReason(false)
-                setRejectionReason('')
-              }}
-              className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 text-sm"
-            >
+          {showReject && (
+            <button onClick={() => { setShowReject(false); setReason('') }}
+              className="px-4 py-1.5 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">
               Cancel
             </button>
           )}
