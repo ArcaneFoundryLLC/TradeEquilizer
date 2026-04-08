@@ -129,12 +129,16 @@ export class QRSessionService {
         throw new Error('This session already has two participants')
       }
 
-      // Update session with second user
+      // Update session with second user and extend expiry to 30 minutes for trading
+      const extendedExpiry = new Date()
+      extendedExpiry.setMinutes(extendedExpiry.getMinutes() + 30)
+
       const { data: updatedSession, error: updateError } = await (supabase
         .from('trade_sessions') as any)
         .update({
           user_b_id: userId,
-          status: 'connected'
+          status: 'connected',
+          expires_at: extendedExpiry.toISOString()
         })
         .eq('id', sessionRow.id)
         .select()
