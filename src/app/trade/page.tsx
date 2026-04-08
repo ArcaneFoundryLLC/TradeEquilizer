@@ -1,15 +1,24 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { TradeSession } from '@/types'
 
 export default function TradePage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [session, setSession] = useState<TradeSession | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [qrCodeInput, setQrCodeInput] = useState('')
+
+  // Auto-fill from ?join= query param (QR code link)
+  useEffect(() => {
+    const joinCode = searchParams.get('join')
+    if (joinCode) {
+      setQrCodeInput(joinCode)
+    }
+  }, [searchParams])
 
   const createSession = async () => {
     setLoading(true)
