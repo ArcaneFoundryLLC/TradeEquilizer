@@ -1,10 +1,22 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { TradeSession } from '@/types'
 
 export default function TradePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
+      </div>
+    }>
+      <TradePageInner />
+    </Suspense>
+  )
+}
+
+function TradePageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [session, setSession] = useState<TradeSession | null>(null)
