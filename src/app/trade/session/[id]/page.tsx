@@ -316,9 +316,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         )}
 
         {isCompleted && (
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4 text-gray-800">
-            ✓ Trade completed.
-          </div>
+          <TradeReceipt proposals={proposals} sessionId={resolvedParams.id} />
         )}
 
         {/* ── Trade Builder ── */}
@@ -667,6 +665,127 @@ function ProposalCard({
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Trade Receipt — shown when a trade is completed
+// ────────────────────────────────────────────────────────────────────────────
+function TradeReceipt({ proposals, sessionId }: { proposals: TradeProposal[]; sessionId: string }) {
+  const accepted = proposals.find(p => p.status === 'accepted')
+
+  const handlePrint = () => window.print()
+
+  if (!accepted) {
+    return (
+      <div className="bg-green-50 border border-green-200 rounded-lg p-6 mb-4 text-center">
+        <div className="text-3xl mb-2">✓</div>
+        <p className="text-green-900 font-semibold text-lg">Trade Completed</p>
+        <p className="text-green-700 text-sm mt-1">This session has been finalized.</p>
+      </div>
+    )
+  }
+
+  const sideA = accepted.proposerItems || []
+  const sideB = accepted.recipientItems || []
+  const totalA = accepted.proposerTotalValue
+  const totalB = accepted.recipientTotalValue
+  const diff = Math.round((totalB - totalA) * 100) / 100
+  const now = accepted.updatedAt || accepted.createdAt
+
+  return (
+    <div className="bg-white border-2 border-green-400 rounded-lg shadow-md mb-4 print:shadow-none print:border print:border-gray-300">
+      {/* Receipt header */}
+      <div className="bg-green-50 px-6 py-4 border-b border-green-200 flex justify-between items-center print:bg-white">
+        <div>
+          <h2 className="text-xl font-bold text-green-900">Trade Receipt</h2>
+          <p className="text-sm text-green-700 mt-0.5">Session {sessionId.slice(0, 8)}… · {new Date(now).toLocaleString()}</p>
+        </div>
+        <button
+          onClick={handlePrint}
+          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm font-medium print:hidden"
+        >
+          Print / Save PDF
+        </button>
+      </div>
+
+      {/* Two-column items */}
+      <div className="grid md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-200">
+        {/* Side A — proposer gave */}
+        <div className="p-5">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Player A Gave</h3>
+          {sideA.length > 0 ? (
+            <div className="space-y-2">
+              {sideA.map((item, i) => (
+                <div key={i} className="flex justify-between text-sm">
+                  <span className="text-gray-800">
+                    {item.quantity}x {item.name || item.itemId}
+                    <span className="text-gray-400 ml-1">({item.condition}, {item.finish})</span>
+                  </span>
+                  {item.currentPrice != null && (
+                    <span className="font-mono text-gray-600">${(item.currentPrice * item.quantity).toFixed(2)}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400 italic">No items</p>
+          )}
+          <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between font-semibold text-sm">
+            <span>Subtotal</span>
+            <span className="font-mono">${totalA.toFixed(2)}</span>
+          </div>
+        </div>
+
+        {/* Side B — proposer received */}
+        <div className="p-5">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Player B Gave</h3>
+          {sideB.length > 0 ? (
+            <div className="space-y-2">
+              {sideB.map((item, i) => (
+                <div key={i} className="flex justify-between text-sm">
+                  <span className="text-gray-800">
+                    {item.quantity}x {item.name || item.itemId}
+                    <span className="text-gray-400 ml-1">({item.condition}, {item.finish})</span>
+                  </span>
+                  {item.currentPrice != null && (
+                    <span className="font-mono text-gray-600">${(item.currentPrice * item.quantity).toFixed(2)}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400 italic">No items</p>
+          )}
+          <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between font-semibold text-sm">
+            <span>Subtotal</span>
+            <span className="font-mono">${totalB.toFixed(2)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Summary footer */}
+      <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-2 print:bg-white">
+        <div className="flex gap-6 text-sm">
+          <span>Side A: <span className="font-semibold font-mono">${totalA.toFixed(2)}</span></span>
+          <span>Side B: <span className="font-semibold font-mono">${totalB.toFixed(2)}</span></span>
+          <span className={`font-semibold ${Math.abs(diff) <= totalA * 0.05 ? 'text-green-600' : 'text-yellow-600'}`}>
+            Difference: ${Math.abs(diff).toFixed(2)}
+          </span>
+        </div>
+        <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+          Math.abs(accepted.fairnessPercentage) <= 5 ? 'bg-green-100 text-green-800' :
+          Math.abs(accepted.fairnessPercentage) <= 10 ? 'bg-yellow-100 text-yellow-800' :
+          'bg-red-100 text-red-800'
+        }`}>
+          Fairness: {accepted.fairnessPercentage > 0 ? '+' : ''}{accepted.fairnessPercentage}%
+        </div>
+      </div>
+
+      <div className="px-6 py-3 text-xs text-gray-400 text-center border-t border-gray-100">
+        TradeEqualizer · Prices sourced from TCGplayer Market · {new Date(now).toLocaleDateString()}
+      </div>
     </div>
   )
 }
