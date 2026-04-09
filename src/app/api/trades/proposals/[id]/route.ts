@@ -1,50 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { TradeProposalService } from '@/lib/services/tradeProposal'
-import { RespondToProposalRequest } from '@/types'
+import { createClient } from '@/lib/supabase/server'
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const resolvedParams = await params
-    const proposalId = resolvedParams.id
-    const body: RespondToProposalRequest = await request.json()
-    
-    // Validate required fields
+    const { id: proposalId } = await params
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 })
+    }
+
+    const body = await request.json()
     if (!body.action || !['accept', 'reject'].includes(body.action)) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid action. Must be "accept" or "reject"' },
-        { status: 400 }
-      )
+      return NextResponse.json({ success: false, error: 'Invalid action' }, { status: 400 })
     }
 
-    // Validate rejection reason if rejecting
-    if (body.action === 'reject' && body.rejectionReason && typeof body.rejectionReason !== 'string') {
-      return NextResponse.json(
-        { success: false, error: 'Rejection reason must be a string' },
-        { status: 400 }
-      )
+    // Update the proposal status in the DB
+    const newStatus = body.action === 'accept' ? 'accepted' : 'rejected'
+    const { data: row, error: updateError } = await (supabase as any)
+      .from('trade_proposals')
+      .update({ status: newStatus })
+      .eq('id', proposalId)
+      .select()
+      .single()
+
+    if (updateError || !row) {
+      console.error('Failed to update proposal:', updateError)
+      return NextResponse.json({ success: false, error: 'Proposal not found' }, { status: 404 })
     }
 
-    const result = await TradeProposalService.respondToProposal(proposalId, body)
-    
-    if (!result.success) {
-      const statusCode = result.error?.includes('Authentication') ? 401 :
-                        result.error?.includes('not found') ? 404 :
-                        result.error?.includes('expired') ? 410 :
-                        result.error?.includes('no longer pending') ? 409 : 400
-      
-      return NextResponse.json(result, { status: statusCode })
+    // If accepted, mark the session as completed
+    if (body.action === 'accept') {
+      await (supabase as any)
+        .from('trade_sessions')
+        .update({ status: 'completed' })
+        .eq('id', row.session_id)
     }
 
-    return NextResponse.json(result)
+    return NextResponse.json({ success: true, proposal: row })
   } catch (error) {
     console.error('Error in PATCH /api/trades/proposals/[id]:', error)
-    return NextResponse.json(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 })
   }
 }
 
@@ -53,24 +53,27 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const resolvedParams = await params
-    const proposalId = resolvedParams.id
+    const { id: proposalId } = await params
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
 
-    const result = await TradeProposalService.cancelProposal(proposalId)
-    
-    if (!result.success) {
-      const statusCode = result.error?.includes('Authentication') ? 401 :
-                        result.error?.includes('not found') ? 404 : 400
-      
-      return NextResponse.json(result, { status: statusCode })
+    if (authError || !user) {
+      return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 })
     }
 
-    return NextResponse.json(result)
+    const { error: deleteError } = await (supabase as any)
+      .from('trade_proposals')
+      .delete()
+      .eq('id', proposalId)
+      .eq('proposed_by', user.id)
+
+    if (deleteError) {
+      return NextResponse.json({ success: false, error: 'Failed to delete' }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Error in DELETE /api/trades/proposals/[id]:', error)
-    return NextResponse.json(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 })
   }
 }
